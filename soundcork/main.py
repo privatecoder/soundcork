@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi_etag import Etag
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -137,7 +137,19 @@ startup_timestamp = int(datetime.now().timestamp() * 1000)
 
 @app.get("/")
 def read_root():
-    return {"Bose": "Can't Brick Us"}
+    # kept for posterity
+    # return {"Bose": "Can't Brick Us"}
+
+    # if there are speakers that need to be configured default to admin
+    all_configured = True
+    for speaker in speakers.all_devices().values():
+        if not speaker.in_soundcork:
+            all_configured = False
+            break
+    if all_configured:
+        return RedirectResponse(url="/miniapp", status_code=303)
+    else:
+        return RedirectResponse(url="/admin", status_code=303)
 
 
 @app.post(
@@ -382,6 +394,11 @@ def account_provider_settings(account: Annotated[str, Path(pattern=ACCOUNT_RE)])
 
 @app.post(
     "/marge/streaming/music/musicprovider/{provider_id}/is_eligible",
+    response_class=BoseXMLResponse,
+    tags=["marge"],
+)
+@app.post(
+    "/marge/streaming/music/musicprovider/{provider_id}/trial/is_eligible",
     response_class=BoseXMLResponse,
     tags=["marge"],
 )
@@ -752,6 +769,13 @@ def bmx_local_internet_radio() -> Service:
     bmx_json_obj = json.loads(bmx_json)
     # this is hardcoded so we know where it is in the array
     return bmx_json_obj["bmx_services"][1]
+@app.post(
+    "/bmx/tunein/v1/report",
+    status_code=HTTPStatus.OK,
+    tags=["bmx"],
+)
+def bmx_tunein_report(request: Request) -> None:
+    return
 
 
 @app.get("/core02/svc-bmx-adapter-orion/prod/orion/station", tags=["bmx"])
@@ -794,6 +818,15 @@ def sw_update() -> Response:
 
 @app.post("/v1/scmudc/{deviceid}", tags=["stats"], status_code=HTTPStatus.OK)
 def stats_scmudc(deviceid: str):
+    """Returns 200 for the analytics endpoint.
+
+    This isn't an endpoint we use, but it's noisy when it fails. Return 200.
+    """
+    return
+
+
+@app.post("/v1/stapp/{deviceid}", tags=["stats"], status_code=HTTPStatus.OK)
+def stats_stapp(deviceid: str):
     """Returns 200 for the analytics endpoint.
 
     This isn't an endpoint we use, but it's noisy when it fails. Return 200.
