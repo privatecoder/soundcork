@@ -1,4 +1,5 @@
 import logging
+import time
 
 from bosesoundtouchapi.soundtouchclient import (  # type: ignore
     ContentItem as BCContentItem,
@@ -14,6 +15,11 @@ from soundcork.model import ContentItem
 
 logger = logging.getLogger(__name__)
 DISCOVERY_TIMEOUT_SECONDS = 5
+
+# After sending play/stop, poll device state up to this many times with this
+# interval before giving up. The Bose device takes a moment to transition.
+STATE_POLL_MAX_ATTEMPTS = 15
+STATE_POLL_INTERVAL_SECONDS = 0.2
 
 
 class CombinedDevice(BaseModel):
@@ -191,7 +197,20 @@ class Speakers:
             logger.error(f"PlayContentItem failed: {e}")
             return False
 
+        self._wait_for_play_state(device_id, expected_playing=True)
         return True
+
+    def _wait_for_play_state(self, device_id: str, expected_playing: bool) -> None:
+        """Poll device until its play state matches expected (or timeout).
+
+        Bose devices take ~0.5-2s to transition after a play/stop command.
+        Without this, the immediate dashboard redirect renders stale state.
+        """
+        for _ in range(STATE_POLL_MAX_ATTEMPTS):
+            time.sleep(STATE_POLL_INTERVAL_SECONDS)
+            np = self.get_now_playing(device_id)
+            if np is not None and np["is_playing"] == expected_playing:
+                return
 
     def stop_playback(self, device_id: str) -> bool:
         """Stop playback on a specific device.
@@ -211,10 +230,12 @@ class Speakers:
         try:
             client.MediaStop()
             logger.info(f"Stopped playback on device {device_id}")
-            return True
         except Exception as e:
             logger.error(f"Error stopping playback on device {device_id}: {e}")
             return False
+
+        self._wait_for_play_state(device_id, expected_playing=False)
+        return True
 
     def get_now_playing(self, device_id: str) -> dict | None:
         """Get the device's current playback state.
