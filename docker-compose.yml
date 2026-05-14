@@ -1,6 +1,6 @@
 services:
   soundcork:
-    image: ghcr.io/deborahgu/soundcork:main
+    build: .
     # we have to have access to the speakers for config, so run in host mode
     network_mode: host
     environment:
@@ -10,6 +10,8 @@ services:
       - data_dir=/soundcork/data
       - SOUNDCORK_MODE=local
       - SOUNDCORK_LOG_DIR=/soundcork/logs/traffic
+      # Set DEV_MODE=true to run in development mode with hot reload and detailed logging
+      - DEV_MODE=${DEV_MODE:-false}
     volumes:
       - ./data:/soundcork/data
       - ./logs:/soundcork/logs

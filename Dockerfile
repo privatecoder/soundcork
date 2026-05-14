@@ -6,17 +6,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code and entrypoint script
 COPY soundcork/ soundcork/
+COPY docker-entrypoint.sh /
+RUN chmod +x /docker-entrypoint.sh
 
 # The app imports "from soundcork.bmx import ..." so /app must be on PYTHONPATH
 # The app reads bmx_services.json, swupdate.xml, and media/ from CWD
 ENV PYTHONPATH=/app
 WORKDIR /app/soundcork
 
-# Gunicorn with uvicorn workers, bind to all interfaces
-# Override log files to stdout/stderr for container logging
-CMD ["gunicorn", "-c", "gunicorn_conf.py", "--bind", "0.0.0.0:8000", \
-     "--access-logfile", "-", "--error-logfile", "-", \
-     "--workers", "1", \
-     "main:app"]
+# Use entrypoint script to support both dev and production modes
+ENTRYPOINT ["/docker-entrypoint.sh"]
