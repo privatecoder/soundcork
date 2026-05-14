@@ -158,12 +158,7 @@
                                         alt=""
                                         class="device-image">
                                     <div class="device-details">
-                                        <div class="device-name">
-                                            {{ device.name }}
-                                            {% if device.device_id == selected_device_id %}
-                                            <span class="device-selected-badge" aria-label="Currently selected">Selected</span>
-                                            {% endif %}
-                                        </div>
+                                        <div class="device-name">{{ device.name }}</div>
                                         <div class="device-type">{{ device.product_code }}</div>
                                     </div>
                                     <div class="device-status-badge" aria-label="Device status: {{ device.status }}">
