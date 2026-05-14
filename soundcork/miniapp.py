@@ -299,9 +299,6 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             form_data = await request.form()
             content_item_id = form_data.get("content_item_id")
             content_item_name = form_data.get("content_item_name")
-            logger.info(
-                f"select-content-item: id={content_item_id}, name={content_item_name}"
-            )
 
             if (
                 not isinstance(content_item_id, str)

@@ -146,7 +146,7 @@ class Speakers:
 
     def _content_item_to_soundtouchclient(self, ci: ContentItem) -> BCContentItem:
         """Maps our ContentItem to a SoundTouchClient ContentItem."""
-        bose_ci = BCContentItem(
+        return BCContentItem(
             name=ci.name,
             source=ci.source,
             typeValue=ci.type,
@@ -154,12 +154,6 @@ class Speakers:
             sourceAccount=ci.source_account,
             isPresetable=ci.is_presetable,
         )
-        logger.debug(
-            f"ContentItem conversion: name={ci.name}, source={ci.source}, "
-            f"type={ci.type}, location={ci.location}, sourceAccount={ci.source_account}, "
-            f"isPresetable={ci.is_presetable}"
-        )
-        return bose_ci
 
     def play_content_item(self, device_id: str, content_item_id: str) -> bool:
         """Play a content_item on a specific device.
@@ -176,63 +170,25 @@ class Speakers:
             logger.error(f"Device {device_id} not found or not online")
             return False
 
-        logger.info(f"Playing content item {content_item_id} on device {device_id}")
-
         content_item = self._datastore.get_content_item(
             account=cd.account,
             device_id=cd.id,
             ci_id=content_item_id,
         )
         if not content_item:
-            logger.error(
-                f"Content item {content_item_id} not found. "
-                f"Available items: {list(self._datastore.get_content_items(account=cd.account, device_id=cd.id).keys())}"
-            )
+            logger.error(f"{content_item_id} is not a defined ContentItem")
             return False
 
         logger.info(
-            f"Loaded ContentItem: id={content_item.id}, name={content_item.name}, "
-            f"source={content_item.source}, type={content_item.type}, "
-            f"location={content_item.location}"
+            f"Attempting playback of content item {content_item_id} on device {device_id}"
         )
-
         bose_content_item = self._content_item_to_soundtouchclient(content_item)
-        logger.info(f"Sending PlayContentItem to device {device_id}")
 
         try:
             client = SoundTouchClient(cd.st_device)
-            # Debug: query device's current source list
-            try:
-                source_list = client.GetSourceList()
-                logger.info(f"Device {device_id} active sources: {source_list}")
-                # Try to iterate and print each source
-                try:
-                    for src in source_list:
-                        logger.info(f"  Source: {src}")
-                except Exception:
-                    # Try different attribute names
-                    for attr in ['SourceItems', 'Sources', 'Items', 'sources']:
-                        if hasattr(source_list, attr):
-                            items = getattr(source_list, attr)
-                            logger.info(f"  Sources via .{attr}: {items}")
-                            try:
-                                for item in items:
-                                    logger.info(
-                                        f"    - source={getattr(item, 'Source', None)}, "
-                                        f"sourceAccount={getattr(item, 'SourceAccount', None)}, "
-                                        f"status={getattr(item, 'Status', None)}, "
-                                        f"isLocal={getattr(item, 'IsLocal', None)}"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Could not iterate {attr}: {e}")
-                            break
-            except Exception as e:
-                logger.warning(f"Could not query device sources: {e}")
-
             client.PlayContentItem(bose_content_item)
-            logger.info(f"PlayContentItem call completed for device {device_id}")
         except Exception as e:
-            logger.error(f"PlayContentItem failed: {e}", exc_info=True)
+            logger.error(f"PlayContentItem failed: {e}")
             return False
 
         return True

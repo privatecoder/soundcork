@@ -31,6 +31,20 @@
 
     <main id="main" class="main-content">
         <div class="container">
+            {% if base_url_check and base_url_check.status != 'ok' %}
+            <div class="alert alert-{{ base_url_check.status }}" role="alert" aria-live="polite">
+                <div class="alert-content">
+                    <strong class="alert-title">
+                        {% if base_url_check.status == 'error' %}Configuration error{% else %}Configuration warning{% endif %}
+                    </strong>
+                    <p>{{ base_url_check.message }}</p>
+                    {% if base_url_check.base_url %}
+                    <p class="alert-detail">Current <code>base_url</code>: <code>{{ base_url_check.base_url }}</code></p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
             {% for id, account in accounts.items() %}
             <section class="dashboard-section" aria-labelledby="account-{{ id }}-heading">
                 <h2 id="account-{{ id }}-heading">

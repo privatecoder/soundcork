@@ -2,16 +2,38 @@
 
 Four ways to run SoundCork, from simplest to most customizable.
 
+## ⚠️ Critical: `base_url` must be reachable from your speakers
+
+`base_url` is the URL that **your Bose speakers** use to talk to soundcork. The speakers receive this URL during configuration and use it for every API call (Marge, BMX registry, source token authentication, etc.).
+
+If the speakers cannot resolve or reach the URL, sources like **TUNEIN, INTERNET_RADIO, and LOCAL_INTERNET_RADIO will silently fail to activate** at boot. The symptom is `UNKNOWN_SOURCE_ERROR` (code 1005) when trying to play a preset — even though the source is correctly listed in the device's `Sources.xml`.
+
+**Do not use:**
+
+- `http://localhost:8000` or `http://127.0.0.1:8000` — speakers cannot reach loopback addresses on the host
+- `http://soundcork:8000` or any container name — speakers are not part of your Docker network
+- A hostname that only resolves inside Kubernetes / Docker
+
+**Use one of:**
+
+- The host's **LAN IP address**: `http://192.168.1.50:8000`
+- A **DNS name resolvable on the speaker network**: `http://soundcork.lan:8000`
+- A **publicly routable** hostname behind your reverse proxy: `https://soundcork.example.com`
+
+After changing `base_url`, you must **re-run "Switch to Soundcork"** in the admin UI for each speaker (this rewrites `OverrideSdkPrivateCfg.xml` on the speaker and reboots it). The admin page (`/admin`) shows a warning when `base_url` looks misconfigured for your detected devices.
+
 ## Option 1: Docker (Simplest)
 
 ```bash
 docker run -d --name soundcork \
   -p 8000:8000 \
   -v /path/to/your/data:/soundcork/data \
-  -e base_url=http://your-server:8000 \
+  -e base_url=http://192.168.1.50:8000 \
   -e data_dir=/soundcork/data \
   ghcr.io/deborahgu/soundcork:main
 ```
+
+> Replace `192.168.1.50` with your host's LAN IP — the address your speakers can reach.
 
 ## Option 2: Docker Compose
 
@@ -24,10 +46,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - base_url=http://your-server:8000
+      # Must be reachable from your speakers - use your host's LAN IP, not localhost
+      - base_url=http://192.168.1.50:8000
       - data_dir=/soundcork/data
-      - SOUNDCORK_MODE=local
-      - SOUNDCORK_LOG_DIR=/soundcork/logs/traffic
+      # Optional: log 404/unhandled requests for debugging
+      - unhandled_log_dir=/soundcork/logs/traffic
     volumes:
       - ./data:/soundcork/data
       - ./logs:/soundcork/logs
@@ -79,13 +102,13 @@ spec:
           ports:
             - containerPort: 8000
           env:
+            # base_url must be reachable from your speakers (not from inside the cluster)
             - name: base_url
               value: "https://soundcork.example.com"
             - name: data_dir
               value: "/soundcork/data"
-            - name: SOUNDCORK_MODE
-              value: "local"
-            - name: SOUNDCORK_LOG_DIR
+            # Optional: log 404/unhandled requests for debugging
+            - name: unhandled_log_dir
               value: "/soundcork/logs/traffic"
           resources:
             requests:

@@ -534,8 +534,34 @@ main {
     color: var(--color-error);
 }
 
+.alert-warning {
+    background: #fff4e5;
+    border-left-color: var(--color-warning);
+    color: #8a5a00;
+}
+
 .alert p {
     margin: 0;
+}
+
+.alert-title {
+    display: block;
+    font-weight: 700;
+    margin-bottom: var(--spacing-xs);
+}
+
+.alert-detail {
+    margin-top: var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    opacity: 0.85;
+}
+
+.alert code {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+    font-size: 0.95em;
 }
 
 /* Footer */

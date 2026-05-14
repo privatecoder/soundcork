@@ -127,24 +127,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.middleware("http")
-async def log_all_requests(request: Request, call_next):
-    """Log every incoming request to help debug device traffic."""
-    client_ip = request.client.host if request.client else "unknown"
-    user_agent = request.headers.get("user-agent", "")
-    logger.info(
-        f"[REQUEST] {request.method} {request.url.path}"
-        f"{('?' + request.url.query) if request.url.query else ''} "
-        f"from {client_ip} UA={user_agent[:80]}"
-    )
-    response = await call_next(request)
-    logger.info(
-        f"[RESPONSE] {request.method} {request.url.path} -> {response.status_code}"
-    )
-    return response
-
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(management_router)
@@ -916,7 +898,7 @@ app.include_router(get_groups_service_router(datastore))
 
 
 #  include admin router
-app.include_router(get_admin_router(datastore, speakers))
+app.include_router(get_admin_router(datastore, speakers, settings))
 
 #  include miniapp router
 app.include_router(get_miniapp_router(datastore, speakers))

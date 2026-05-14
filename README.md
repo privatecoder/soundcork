@@ -122,6 +122,8 @@ new contents of ```.env.private```:
 	base_url = "http://soundcork.local.example.com:8000"
 	data_dir = "/home/soundcork/db"
 
+> **Important:** `base_url` must be reachable **from your speakers**, not just from the host running soundcork. Do not use `localhost`, `127.0.0.1`, or Docker container names. Use the host's LAN IP (e.g., `http://192.168.1.50:8000`) or a DNS name resolvable on your speaker network. If speakers can't reach `base_url`, sources like TUNEIN will fail to activate and presets will return `UNKNOWN_SOURCE_ERROR`. See [docs/deployment.md](docs/deployment.md) for details.
+
 and then start the server
 
 	fastapi run main.py
