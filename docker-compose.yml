@@ -8,8 +8,8 @@ services:
       # Use port 8000 for direct access or port 8001 for access through nginx-ETag.
       - base_url=http://soundcork:8001
       - data_dir=/soundcork/data
-      - SOUNDCORK_MODE=local
-      - SOUNDCORK_LOG_DIR=/soundcork/logs/traffic
+      # Log all 404/unhandled requests to this directory (for debugging)
+      - unhandled_log_dir=/soundcork/logs/traffic
       # Set DEV_MODE=true to run in development mode with hot reload and detailed logging
       - DEV_MODE=${DEV_MODE:-false}
     volumes:
