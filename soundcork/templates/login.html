@@ -34,10 +34,12 @@
                                 class="account-button"
                                 aria-label="Login as {{ account_data.label }}">
                                 <span class="account-label">{{ account_data.label }}</span>
-                                <span class="account-id">{{ account_id }}</span>
-                                {% if account_data.device_count %}
-                                <span class="account-devices">{{ account_data.device_count }} device{% if account_data.device_count != 1 %}s{% endif %}</span>
-                                {% endif %}
+                                <span class="account-meta">
+                                    <code class="account-id-pill">{{ account_id }}</code>
+                                    {% if account_data.device_count %}
+                                    <span class="account-devices">{{ account_data.device_count }} device{% if account_data.device_count != 1 %}s{% endif %}</span>
+                                    {% endif %}
+                                </span>
                             </button>
                         </li>
                         {% endfor %}
