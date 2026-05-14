@@ -205,6 +205,27 @@ class Speakers:
             try:
                 source_list = client.GetSourceList()
                 logger.info(f"Device {device_id} active sources: {source_list}")
+                # Try to iterate and print each source
+                try:
+                    for src in source_list:
+                        logger.info(f"  Source: {src}")
+                except Exception:
+                    # Try different attribute names
+                    for attr in ['SourceItems', 'Sources', 'Items', 'sources']:
+                        if hasattr(source_list, attr):
+                            items = getattr(source_list, attr)
+                            logger.info(f"  Sources via .{attr}: {items}")
+                            try:
+                                for item in items:
+                                    logger.info(
+                                        f"    - source={getattr(item, 'Source', None)}, "
+                                        f"sourceAccount={getattr(item, 'SourceAccount', None)}, "
+                                        f"status={getattr(item, 'Status', None)}, "
+                                        f"isLocal={getattr(item, 'IsLocal', None)}"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Could not iterate {attr}: {e}")
+                            break
             except Exception as e:
                 logger.warning(f"Could not query device sources: {e}")
 
