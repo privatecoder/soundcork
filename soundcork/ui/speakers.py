@@ -201,6 +201,13 @@ class Speakers:
 
         try:
             client = SoundTouchClient(cd.st_device)
+            # Debug: query device's current source list
+            try:
+                source_list = client.GetSourceList()
+                logger.info(f"Device {device_id} active sources: {source_list}")
+            except Exception as e:
+                logger.warning(f"Could not query device sources: {e}")
+
             client.PlayContentItem(bose_content_item)
             logger.info(f"PlayContentItem call completed for device {device_id}")
         except Exception as e:
