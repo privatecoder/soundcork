@@ -491,6 +491,31 @@ main {
     cursor: not-allowed;
 }
 
+.device-button.is-selected {
+    border-color: var(--color-primary);
+    border-width: 2px;
+    background: var(--color-primary-light);
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.15), var(--shadow-md);
+}
+
+.device-button.is-selected .device-name {
+    color: var(--color-primary);
+}
+
+.device-selected-badge {
+    display: inline-block;
+    margin-left: var(--spacing-sm);
+    padding: 2px var(--spacing-sm);
+    background: var(--color-primary);
+    color: white;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    border-radius: 999px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 .device-image {
     width: 4rem;
     height: 4rem;
@@ -857,14 +882,36 @@ textarea:focus {
 .section-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--spacing-md);
     margin-bottom: var(--spacing-lg);
 }
 
 .section-header h2 {
     margin-bottom: 0;
+}
+
+.section-header-title {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.section-subtitle {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+.section-subtitle strong {
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+.section-subtitle-warning {
+    color: var(--color-warning);
+    font-weight: 500;
 }
 
 .section-link {
