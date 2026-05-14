@@ -123,34 +123,36 @@
                         </div>
                         <a href="/miniapp/presets" class="section-link">Manage</a>
                     </div>
-                    {% if presets %}
-                    <ol class="presets-grid">
-                        {% for preset in presets %}
-                        {% set is_playing_preset = is_playing == 'true' and selected_content_item and selected_content_item == preset.name %}
-                        <li>
-                            <form action="/miniapp/select-content-item" method="post" style="display:contents;">
-                                <input type="hidden" name="content_item_id" value="{{ preset.id }}">
-                                <input type="hidden" name="content_item_name" value="{{ preset.name }}">
-                                <button type="submit" class="preset-card{% if is_playing_preset %} is-playing{% endif %}"
-                                    {% if is_playing_preset %}aria-pressed="true"{% endif %}>
-                                    {% if preset.container_art %}
-                                    <img src="{{ preset.container_art }}" alt="" class="preset-image">
-                                    {% else %}
-                                    <div class="preset-placeholder"></div>
-                                    {% endif %}
-                                    <div class="preset-overlay">
-                                        <span class="preset-name">{{ preset.name }}</span>
-                                    </div>
-                                </button>
-                            </form>
-                        </li>
-                        {% endfor %}
-                    </ol>
-                    {% else %}
-                    <div class="empty-state">
-                        <div class="empty-icon">📻</div>
-                        <p>No presets configured yet</p>
-                    </div>
+                    {% if selected_device_id %}
+                        {% if presets %}
+                        <ol class="presets-grid">
+                            {% for preset in presets %}
+                            {% set is_playing_preset = is_playing == 'true' and selected_content_item and selected_content_item == preset.name %}
+                            <li>
+                                <form action="/miniapp/select-content-item" method="post" style="display:contents;">
+                                    <input type="hidden" name="content_item_id" value="{{ preset.id }}">
+                                    <input type="hidden" name="content_item_name" value="{{ preset.name }}">
+                                    <button type="submit" class="preset-card{% if is_playing_preset %} is-playing{% endif %}"
+                                        {% if is_playing_preset %}aria-pressed="true"{% endif %}>
+                                        {% if preset.container_art %}
+                                        <img src="{{ preset.container_art }}" alt="" class="preset-image">
+                                        {% else %}
+                                        <div class="preset-placeholder"></div>
+                                        {% endif %}
+                                        <div class="preset-overlay">
+                                            <span class="preset-name">{{ preset.name }}</span>
+                                        </div>
+                                    </button>
+                                </form>
+                            </li>
+                            {% endfor %}
+                        </ol>
+                        {% else %}
+                        <div class="empty-state">
+                            <div class="empty-icon">📻</div>
+                            <p>No presets configured yet</p>
+                        </div>
+                        {% endif %}
                     {% endif %}
                 </section>
 
