@@ -113,14 +113,7 @@
             <div class="dashboard-grid">
                 <section class="dashboard-section presets-section" aria-labelledby="presets-heading">
                     <div class="section-header">
-                        <div class="section-header-title">
-                            <h2 id="presets-heading">Presets</h2>
-                            {% if selected_device %}
-                            <p class="section-subtitle">Plays on <strong>{{ selected_device }}</strong></p>
-                            {% else %}
-                            <p class="section-subtitle section-subtitle-warning">Select a device below first</p>
-                            {% endif %}
-                        </div>
+                        <h2 id="presets-heading">Presets</h2>
                         <a href="/miniapp/presets" class="section-link">Manage</a>
                     </div>
                     {% if presets %}
