@@ -273,6 +273,87 @@
                 window.location.reload();
             });
         });
+
+        // Periodic poll so source/track/volume changes made outside soundcork
+        // (e.g., user switches the speaker to Bluetooth via the SoundTouch
+        // app) reflect on the dashboard within a few seconds without
+        // requiring manual navigation.
+        const STATUS_POLL_MS = 3000;
+        let lastIsPlaying = {{ 'true' if is_playing == 'true' else 'false' }};
+        let lastHasResume = {{ 'true' if resume_content_id else 'false' }};
+        let lastPendingAction = {{ "'play'" if pending_action == 'play' else ("'stop'" if pending_action == 'stop' else 'null') }};
+
+        function applyStatus(s) {
+            if (!s || !s.selected) return;
+
+            // Major state changes need a full reload so the Play/Stop button
+            // and meta-refresh state line up with the server's render.
+            const pendingChanged = (s.pending_action || null) !== lastPendingAction;
+            const playStateChanged = s.is_playing !== lastIsPlaying;
+            const resumeAppeared = s.has_resume !== lastHasResume;
+            if (pendingChanged || playStateChanged || resumeAppeared) {
+                window.location.reload();
+                return;
+            }
+
+            // Update Now Playing widget content (label/text only — the
+            // is-active and is-pending classes flip via reload above).
+            const widget = document.querySelector('.now-playing');
+            const label = widget && widget.querySelector('.now-playing-label');
+            const content = widget && widget.querySelector('.now-playing-content');
+            if (label && !widget.classList.contains('is-pending')) {
+                label.textContent = s.is_playing ? 'Now Playing' : 'Idle';
+            }
+            if (content) {
+                if (s.content_name) {
+                    content.innerHTML = '<span class="content-name"></span>';
+                    content.querySelector('.content-name').textContent = s.content_name;
+                } else {
+                    content.innerHTML = '<span class="content-placeholder">Select a preset</span>';
+                }
+            }
+
+            // Volume
+            if (s.volume) {
+                const valEl = document.querySelector('.volume-value');
+                if (valEl) valEl.textContent = s.volume.actual;
+                const muteBtn = document.querySelector('.btn-volume-display');
+                if (muteBtn) {
+                    muteBtn.classList.toggle('is-muted', !!s.volume.muted);
+                }
+            }
+
+            // Preset highlight — only when on a streamed source.
+            document.querySelectorAll('.preset-card').forEach(card => {
+                card.classList.remove('is-playing');
+            });
+            if (s.is_playing && !s.is_local_source && s.content_name) {
+                document.querySelectorAll('.preset-card .preset-name').forEach(nameEl => {
+                    if (nameEl.textContent.trim() === s.content_name.trim()) {
+                        nameEl.closest('.preset-card').classList.add('is-playing');
+                    }
+                });
+            }
+        }
+
+        async function pollStatus() {
+            if (document.hidden) return;
+            try {
+                const res = await fetch('/miniapp/status', {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' },
+                });
+                if (!res.ok) return;
+                applyStatus(await res.json());
+            } catch (err) {
+                /* network blip — try again next tick */
+            }
+        }
+
+        setInterval(pollStatus, STATUS_POLL_MS);
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) pollStatus();
+        });
     </script>
 </body>
 </html>

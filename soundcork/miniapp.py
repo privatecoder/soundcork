@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from soundcork.constants import DEFAULT_DATESTR, DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
@@ -575,6 +575,49 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             return RedirectResponse(url="/miniapp/dashboard", status_code=303)
         speakers.toggle_mute(selected_device_id)
         return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.get("/miniapp/status")
+    async def status(request: Request) -> JSONResponse:
+        """JSON snapshot of the selected device's live state.
+
+        Polled by the dashboard JS so it can update the Now Playing widget,
+        volume, and preset highlight when the device's source/track/volume
+        changes (e.g., the user picks Bluetooth from the SoundTouch app).
+        """
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return JSONResponse({"selected": False})
+
+        volume = speakers.get_volume(selected_device_id)
+        now_playing = speakers.get_now_playing(selected_device_id)
+        is_playing_bool = bool(now_playing and now_playing["is_playing"])
+
+        pending_action, _ = _read_pending_action(
+            request.cookies.get("soundcork_pending_action"),
+            is_playing_bool,
+        )
+
+        return JSONResponse(
+            {
+                "selected": True,
+                "selected_device_id": selected_device_id,
+                "is_playing": is_playing_bool,
+                "content_name": (
+                    now_playing.get("content_name") if now_playing else None
+                ),
+                "is_local_source": bool(
+                    now_playing and now_playing.get("is_local_source")
+                ),
+                "source": (
+                    now_playing.get("source") if now_playing else None
+                ),
+                "volume": volume,
+                "pending_action": pending_action,
+                "has_resume": bool(
+                    request.cookies.get("soundcork_selected_content_item_id")
+                ),
+            }
+        )
 
     @router.post("/miniapp/logout")
     async def logout(request: Request):
