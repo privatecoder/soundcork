@@ -110,6 +110,8 @@ class DataStore:
         except FileNotFoundError:
             # Initialize the file if it doesn't exist
             self.initialize_accounts_file()
+            with open(path.join(self.data_dir, ACCOUNTS_FILE), "r") as f:
+                accounts = json.load(f)
         if account not in accounts:
             self.save_account_info(account, f"{DEFAULT_ACCOUNT_LABEL} {account}")
             return f"{DEFAULT_ACCOUNT_LABEL} {account}"

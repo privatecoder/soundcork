@@ -158,34 +158,53 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 response.delete_cookie("soundcork_account_label")
                 return response
 
-            # Get devices and speakers for this account
             combined_devices = speakers.all_devices()
-            my_combined_devices = {
-                device_id: cd
-                for device_id, cd in combined_devices.items()
-                if cd.account == account_id
-            }
-
             devices: list[dict[str, str]] = []
             presets: list["Preset"] = []
 
-            for device_id in my_combined_devices.keys():
+            for device_id in datastore.list_devices(account_id):
                 try:
-                    ready = "offline"
-                    cd = my_combined_devices[device_id]
                     device_info = datastore.get_device_info(account_id, device_id)
-                    if (
-                        cd.online
-                        and cd.in_soundcork
-                        and (cd.marge_server == "Soundcork")
-                    ):
-                        ready = "online"
+                    cd = combined_devices.get(device_id)
+
+                    # Determine device status with detailed logging for debugging
+                    if not cd:
+                        status = "not_discovered"
+                        logger.info(
+                            f"Device {device_id} ({device_info.name}): not_discovered "
+                            f"(not in combined_devices)"
+                        )
+                    elif not cd.online:
+                        status = "offline"
+                        logger.info(
+                            f"Device {device_id} ({device_info.name}): offline "
+                            f"(not currently discovered on network)"
+                        )
+                    elif not cd.in_soundcork:
+                        status = "offline"
+                        logger.info(
+                            f"Device {device_id} ({device_info.name}): offline "
+                            f"(not in_soundcork, needs configuration)"
+                        )
+                    elif cd.marge_server != "Soundcork":
+                        status = "online_bose"
+                        logger.info(
+                            f"Device {device_id} ({device_info.name}): online_bose "
+                            f"(discovered but still using Bose: {cd.marge_server})"
+                        )
+                    else:
+                        status = "online"
+                        logger.info(
+                            f"Device {device_id} ({device_info.name}): online "
+                            f"(ready to use)"
+                        )
+
                     devices.append(
                         {
                             "name": device_info.name,
                             "product_code": device_info.product_code,
                             "device_id": device_info.device_id,
-                            "status": ready,
+                            "status": status,
                             "image_file": get_device_image(device_info.product_code),
                         }
                     )

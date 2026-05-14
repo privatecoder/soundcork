@@ -13,6 +13,7 @@ from soundcork.datastore import DataStore
 from soundcork.model import ContentItem
 
 logger = logging.getLogger(__name__)
+DISCOVERY_TIMEOUT_SECONDS = 5
 
 
 class CombinedDevice(BaseModel):
@@ -56,9 +57,12 @@ class Speakers:
 
     def __init__(self, datastore: DataStore, settings: Settings) -> None:
         self._st_discovery = SoundTouchDiscovery(areDevicesVerified=True)
-        self._st_discovery.DiscoverDevices(timeout=1)
         self._datastore = datastore
         self._settings = settings
+        self.refresh_discovery()
+
+    def refresh_discovery(self) -> None:
+        self._st_discovery.DiscoverDevices(timeout=DISCOVERY_TIMEOUT_SECONDS)
 
     def soundtouch_devices(self) -> dict:
         return self._st_discovery.VerifiedDevices

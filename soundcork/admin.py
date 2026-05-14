@@ -46,6 +46,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers):
 
     @router.get("/admin/", response_class=HTMLResponse)
     async def admin(request: Request):
+        speakers.refresh_discovery()
         combined_devices = speakers.all_devices()
 
         unassociated_devices = []
