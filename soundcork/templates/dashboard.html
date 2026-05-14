@@ -272,6 +272,31 @@
             label.appendChild(document.createTextNode(pendingLabel));
         }
 
+        const ACTION_POLL_MS = 750;
+        const ACTION_TIMEOUT_MS = 30000;
+        let actionInFlight = false;
+
+        async function awaitActionResolved() {
+            // Poll /miniapp/status until the server clears the pending
+            // action (state matches expected) or until we time out.
+            const deadline = Date.now() + ACTION_TIMEOUT_MS;
+            while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, ACTION_POLL_MS));
+                try {
+                    const res = await fetch('/miniapp/status', {
+                        credentials: 'same-origin',
+                        headers: { 'Accept': 'application/json' },
+                    });
+                    if (!res.ok) continue;
+                    const s = await res.json();
+                    if (!s.pending_action) return true;
+                } catch (err) {
+                    /* keep polling */
+                }
+            }
+            return false;
+        }
+
         document.querySelectorAll('form').forEach(form => {
             form.addEventListener('submit', async (e) => {
                 const btn = form.querySelector('button[type="submit"]');
@@ -293,6 +318,7 @@
                 // several seconds while the speaker responds.
                 e.preventDefault();
                 updateNowPlayingLabel(pendingLabel);
+                actionInFlight = true;  // pause the periodic poll's auto-reload
 
                 try {
                     await fetch(form.action, {
@@ -301,8 +327,12 @@
                         credentials: 'same-origin',
                         redirect: 'follow',
                     });
+                    // Keep the spinner up until the device actually transitions
+                    // (or we time out). The label stays at "Starting…" /
+                    // "Stopping…" / "Switching…" the whole time.
+                    await awaitActionResolved();
                 } catch (err) {
-                    // Network error — still reload so the user sees current state.
+                    /* fall through to reload */
                 }
                 window.location.reload();
             });
@@ -382,7 +412,7 @@
         }
 
         async function pollStatus() {
-            if (document.hidden) return;
+            if (document.hidden || actionInFlight) return;
             try {
                 const res = await fetch('/miniapp/status', {
                     credentials: 'same-origin',
