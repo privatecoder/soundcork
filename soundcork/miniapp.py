@@ -634,6 +634,42 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         speakers.toggle_mute(selected_device_id)
         return RedirectResponse(url="/miniapp/dashboard", status_code=303)
 
+    @router.post("/miniapp/media-play")
+    async def media_play_endpoint(request: Request):
+        """Resume playback on the device's current source (BT/AirPlay/UPnP)."""
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        success = speakers.media_play(selected_device_id)
+        response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        if success:
+            response.set_cookie(
+                key="soundcork_pending_action",
+                value=f"play:{int(time.time())}",
+                max_age=PENDING_ACTION_MAX_AGE_SECONDS,
+                httponly=True,
+                samesite="strict",
+            )
+        return response
+
+    @router.post("/miniapp/media-next")
+    async def media_next_endpoint(request: Request):
+        """Skip to the next track on the device's current source."""
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        speakers.media_next(selected_device_id)
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.post("/miniapp/media-previous")
+    async def media_previous_endpoint(request: Request):
+        """Skip to the previous track on the device's current source."""
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        speakers.media_previous(selected_device_id)
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
     @router.get("/miniapp/status")
     async def status(request: Request) -> JSONResponse:
         """JSON snapshot of the selected device's live state.
@@ -664,11 +700,23 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 "content_name": (
                     now_playing.get("content_name") if now_playing else None
                 ),
+                "artist": (
+                    now_playing.get("artist") if now_playing else None
+                ),
                 "is_local_source": bool(
                     now_playing and now_playing.get("is_local_source")
                 ),
+                "supports_skip": bool(
+                    now_playing and now_playing.get("supports_skip")
+                ),
+                "supports_local_resume": bool(
+                    now_playing and now_playing.get("supports_local_resume")
+                ),
                 "source": (
                     now_playing.get("source") if now_playing else None
+                ),
+                "source_label": (
+                    now_playing.get("source_label") if now_playing else None
                 ),
                 "volume": volume,
                 "pending_action": pending_action,

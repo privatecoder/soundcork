@@ -37,6 +37,9 @@
                             <span class="content-placeholder">Select a preset</span>
                         {% endif %}
                     </div>
+                    {% if now_playing and now_playing.artist %}
+                    <div class="now-playing-artist">{{ now_playing.artist }}</div>
+                    {% endif %}
                     <div class="playing-device">on {{ selected_device }}</div>
                 </div>
                 {% endif %}
@@ -72,16 +75,41 @@
 
                 {% if selected_device_id %}
                     {% set is_aux = now_playing and now_playing.source == 'AUX' %}
+                    {% set supports_skip = now_playing and now_playing.supports_skip %}
+                    {% set supports_local_resume = now_playing and now_playing.supports_local_resume %}
+
+                    {% if supports_skip %}
+                    <form action="/miniapp/media-previous" method="post">
+                        <button type="submit" class="btn-control btn-skip" title="Previous track">
+                            <span aria-hidden="true">⏮</span>
+                        </button>
+                    </form>
+                    {% endif %}
+
                     {% if is_playing == "true" and not is_aux %}
                     <form action="/miniapp/stop" method="post">
                         <button type="submit" class="btn-control btn-stop" title="Stop playback">
                             <span aria-hidden="true">■</span>
                         </button>
                     </form>
+                    {% elif supports_local_resume %}
+                    <form action="/miniapp/media-play" method="post">
+                        <button type="submit" class="btn-control btn-play" title="Resume playback">
+                            <span aria-hidden="true">▶</span>
+                        </button>
+                    </form>
                     {% elif resume_content_id and not is_aux %}
                     <form action="/miniapp/play" method="post">
                         <button type="submit" class="btn-control btn-play" title="Resume last preset">
                             <span aria-hidden="true">▶</span>
+                        </button>
+                    </form>
+                    {% endif %}
+
+                    {% if supports_skip %}
+                    <form action="/miniapp/media-next" method="post">
+                        <button type="submit" class="btn-control btn-skip" title="Next track">
+                            <span aria-hidden="true">⏭</span>
                         </button>
                     </form>
                     {% endif %}
@@ -254,6 +282,7 @@
         // the page once the server confirms. Forms still work without JS.
         const PENDING_LABELS = {
             '/miniapp/play':                  'Starting\u2026',
+            '/miniapp/media-play':            'Resuming\u2026',
             '/miniapp/select-content-item':   'Starting\u2026',
             '/miniapp/select-source':         'Switching\u2026',
             '/miniapp/stop':                  'Stopping\u2026',
@@ -375,6 +404,23 @@
                     content.querySelector('.content-name').textContent = s.content_name;
                 } else {
                     content.innerHTML = '<span class="content-placeholder">Select a preset</span>';
+                }
+            }
+
+            // Artist line — present only when the device reports it (BT/AirPlay/UPnP)
+            const widgetEl = document.querySelector('.now-playing');
+            if (widgetEl) {
+                let artistEl = widgetEl.querySelector('.now-playing-artist');
+                const deviceEl = widgetEl.querySelector('.playing-device');
+                if (s.artist) {
+                    if (!artistEl) {
+                        artistEl = document.createElement('div');
+                        artistEl.className = 'now-playing-artist';
+                        widgetEl.insertBefore(artistEl, deviceEl);
+                    }
+                    artistEl.textContent = s.artist;
+                } else if (artistEl) {
+                    artistEl.remove();
                 }
             }
 

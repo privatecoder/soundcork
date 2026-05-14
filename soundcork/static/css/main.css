@@ -204,6 +204,18 @@ main {
     color: var(--color-text-secondary);
 }
 
+.now-playing-artist {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-xs);
+    word-break: break-word;
+}
+
+.now-playing.is-active .now-playing-artist {
+    color: var(--color-primary);
+    opacity: 0.85;
+}
+
 .header-controls {
     display: flex;
     align-items: center;
@@ -249,6 +261,22 @@ main {
 
 .btn-play:hover {
     background: #218838;
+}
+
+.btn-skip {
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+}
+
+.btn-skip:hover {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.btn-skip:active {
+    transform: scale(0.95);
 }
 
 /* Volume controls */

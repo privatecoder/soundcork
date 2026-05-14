@@ -34,6 +34,37 @@ LOCAL_SOURCE_LABELS = {
     "STANDBY": "Standby",
     "SLAVE_SOURCE": "Grouped",
 }
+
+# Sources where Next/Previous (AVRCP / UPnP transport-skip) makes sense.
+# Radio streams (TuneIn etc.) don't have tracks; AUX/Alexa/notifications
+# either have no transport or don't expose it.
+TRACK_BASED_SOURCES = {
+    "BLUETOOTH",
+    "AIRPLAY",
+    "AMAZON",
+    "DEEZER",
+    "SPOTIFY",
+    "TIDAL",
+    "QPLAY",
+    "UPNP",
+    "STORED_MUSIC",
+    "STORED_MUSIC_MEDIA_RENDERER",
+    "SOUNDCLOUD",
+    "IHEART",
+    "GOOGLE_PLAY_MUSIC",
+    "PHONE_MUSIC",
+}
+
+# Sources where a "Resume play" command (MediaPlay) should be routed to
+# the device's current source instead of re-triggering a preset.
+LOCAL_TRANSPORT_SOURCES = {
+    "BLUETOOTH",
+    "AIRPLAY",
+    "UPNP",
+    "STORED_MUSIC",
+    "STORED_MUSIC_MEDIA_RENDERER",
+    "QPLAY",
+}
 # Skip a redundant UPnP rescan if one ran this recently. Force a fresh scan
 # with refresh_discovery(force=True) when the user explicitly asks for it.
 DISCOVERY_CACHE_TTL_SECONDS = 30
@@ -323,27 +354,88 @@ class Speakers:
             source = (getattr(np, "Source", "") or "").upper()
             is_local = source in LOCAL_SOURCE_LABELS
 
+            track = (getattr(np, "Track", "") or "").strip() or None
+            artist = (getattr(np, "Artist", "") or "").strip() or None
+            is_playing = play_state in {
+                "PLAY_STATE", "BUFFERING_STATE", "PLAY", "BUFFERING"
+            }
+            source_label = LOCAL_SOURCE_LABELS.get(source) if is_local else None
+            artist_out = None
+
             if is_local:
-                # For local inputs, the device often retains StationName from
-                # the previous preset — ignore it and label with the source.
-                content_name = LOCAL_SOURCE_LABELS[source]
+                if source in TRACK_BASED_SOURCES and is_playing and (track or artist):
+                    # BT/AirPlay/UPnP/etc. broadcast track metadata via AVRCP
+                    # — use it as the headline. Fall back to source label.
+                    content_name = track or artist or LOCAL_SOURCE_LABELS[source]
+                    artist_out = artist if track and artist else None
+                else:
+                    # AUX/idle/etc. — show the source name itself. Skip the
+                    # stale StationName the device may have kept.
+                    content_name = LOCAL_SOURCE_LABELS[source]
             else:
                 content_name = (
-                    getattr(np, "StationName", None)
-                    or getattr(np, "Track", None)
-                    or getattr(np, "Artist", None)
+                    (getattr(np, "StationName", "") or "").strip()
+                    or track
+                    or artist
+                    or None
                 )
 
             return {
                 "content_name": content_name,
+                "artist": artist_out,
                 "source": source,
+                "source_label": source_label,
                 "is_local_source": is_local,
+                "supports_skip": source in TRACK_BASED_SOURCES,
+                "supports_local_resume": source in LOCAL_TRANSPORT_SOURCES,
                 "play_state": play_state,
-                "is_playing": play_state in {"PLAY_STATE", "BUFFERING_STATE", "PLAY", "BUFFERING"},
+                "is_playing": is_playing,
             }
         except Exception as e:
             logger.error(f"Error getting now-playing on device {device_id}: {e}")
             return None
+
+    def media_play(self, device_id: str) -> bool:
+        """Resume playback on the device's current source (AVRCP/UPnP play)."""
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            client.MediaPlay()
+            logger.info(f"Sent media-play to device {device_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending media-play to {device_id}: {e}")
+            return False
+
+    def media_next(self, device_id: str) -> bool:
+        """Skip to the next track on the device's current source."""
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            client.MediaNextTrack()
+            logger.info(f"Sent media-next to device {device_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending media-next to {device_id}: {e}")
+            return False
+
+    def media_previous(self, device_id: str) -> bool:
+        """Skip to the previous track on the device's current source."""
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            client.MediaPreviousTrack()
+            logger.info(f"Sent media-previous to device {device_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending media-previous to {device_id}: {e}")
+            return False
 
     def get_volume(self, device_id: str) -> dict | None:
         """Get the current volume state of a device.
