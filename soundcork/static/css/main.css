@@ -657,6 +657,26 @@ main {
     transform: translateY(-1px);
 }
 
+.input-chip-status {
+    cursor: default;
+    opacity: 0.55;
+    color: var(--color-text-secondary);
+    border-style: dashed;
+}
+
+.input-chip-status:hover {
+    background: var(--color-surface);
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+    box-shadow: var(--shadow-xs);
+    transform: none;
+}
+
+.input-chip-status.is-active {
+    opacity: 1;
+    border-style: solid;
+}
+
 .input-chip:active {
     transform: translateY(0);
 }
