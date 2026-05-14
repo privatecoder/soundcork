@@ -439,24 +439,31 @@ main {
 
 .preset-overlay {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.8) 100%);
-    padding: var(--spacing-md);
+    left: var(--spacing-sm);
+    right: var(--spacing-sm);
+    bottom: var(--spacing-sm);
     display: flex;
-    align-items: flex-end;
     justify-content: center;
-    min-height: 3rem;
+    pointer-events: none;
 }
 
 .preset-name {
+    display: inline-block;
+    max-width: 100%;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: rgba(17, 24, 39, 0.72);
+    -webkit-backdrop-filter: blur(8px) saturate(160%);
+    backdrop-filter: blur(8px) saturate(160%);
     color: white;
     font-size: var(--font-size-sm);
     font-weight: 600;
     text-align: center;
-    word-break: break-word;
-    line-height: 1.4;
+    line-height: 1.3;
+    border-radius: 999px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Devices section */
@@ -965,10 +972,15 @@ textarea:focus {
     width: 4rem;
 }
 
-.preset-name {
+.presets-table .preset-name {
     font-weight: 500;
     color: var(--color-text);
     white-space: nowrap;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+    display: table-cell;
 }
 
 .preset-source {
