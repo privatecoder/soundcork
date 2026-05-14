@@ -21,6 +21,14 @@
 
             <div class="header-controls">
                 <div class="header-user">
+                    <button
+                        type="button"
+                        id="admin-refresh-btn"
+                        class="btn-secondary"
+                        style="padding: var(--spacing-sm) var(--spacing-md); font-size: var(--font-size-sm); display: inline-flex; align-items: center; gap: var(--spacing-xs);">
+                        <span class="refresh-icon" aria-hidden="true">⟳</span>
+                        <span class="refresh-label">Refresh</span>
+                    </button>
                     <a href="/miniapp" class="btn-secondary" style="padding: var(--spacing-sm) var(--spacing-md); font-size: var(--font-size-sm);">Back to App</a>
                 </div>
             </div>
@@ -43,111 +51,38 @@
             </div>
             {% endif %}
 
-            {% for id, account in accounts.items() %}
-            <section class="dashboard-section" aria-labelledby="account-{{ id }}-heading">
-                <div class="account-header">
-                    <div>
-                        <h2 id="account-{{ id }}-heading">{{ account.label }}</h2>
-                        <p class="account-id-line">
-                            Account ID: <code>{{ account.id }}</code>
-                            {% if not account.in_soundcork %}
-                            <span class="account-not-configured">(Not configured)</span>
-                            {% endif %}
-                        </p>
-                    </div>
-                    {% if account.in_soundcork %}
-                    <form action="/admin/renameAccount/{{ account.id }}" method="post" class="account-rename-form">
-                        <label for="rename-{{ account.id }}" class="sr-only">Rename account {{ account.id }}</label>
-                        <input
-                            type="text"
-                            id="rename-{{ account.id }}"
-                            name="label"
-                            value="{{ account.label }}"
-                            data-original="{{ account.label }}"
-                            placeholder="Account label"
-                            maxlength="64"
-                            required>
-                        <button type="submit" class="btn-primary btn-small-primary">Rename</button>
-                    </form>
-                    {% endif %}
-                </div>
+            <div id="admin-status" class="admin-status is-loading" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <span class="admin-status-text">Discovering devices on your network…</span>
+            </div>
 
-                {% if account.devices %}
-                <div class="admin-devices-grid">
-                    {% for device in account.devices %}
-                    <div class="device-card device-{{ device.marge_server|lower }}">
-                        <div class="device-info">
-                            <div class="device-details">
-                                <div class="device-name">{{ device.name }}</div>
-                                <div class="device-type">{{ device.id }}</div>
-                            </div>
-                            <div class="device-status-badge" aria-label="Device status">
-                                <span class="status-dot" style="background: {% if device.online %}var(--color-success){% else %}var(--color-error){% endif %};"></span>
-                                <span class="status-text">
-                                    {% if device.online %}Online{% else %}Offline{% endif %}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div class="admin-device-meta">
-                            <div class="meta-row">
-                                <span class="meta-label">IP:</span>
-                                <span class="meta-value">{{ device.ip }}</span>
-                            </div>
-                            <div class="meta-row">
-                                <span class="meta-label">Marge:</span>
-                                <span class="meta-value">{{ device.marge_server }}</span>
-                            </div>
-                            <div class="meta-row">
-                                <span class="meta-label">In Soundcork:</span>
-                                <span class="meta-value">
-                                    {% if device.in_soundcork %}
-                                    <span style="color: var(--color-success);">✓ Yes</span>
-                                    {% else %}
-                                    <span style="color: var(--color-error);">✗ No</span>
-                                    {% endif %}
-                                </span>
-                            </div>
-                            <div class="meta-row">
-                                <span class="meta-label">Reachable:</span>
-                                <span class="meta-value">
-                                    {% if device.reachable %}
-                                    <span style="color: var(--color-success);">✓ Yes</span>
-                                    {% else %}
-                                    <span style="color: var(--color-text-secondary);">✗ No</span>
-                                    {% endif %}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div class="admin-device-actions">
-                            {% if not device.in_soundcork %}
-                                {% if not account.in_soundcork and device.reachable %}
-                                <form action="/admin/addDevice/{{ device.id }}" method="POST" style="flex: 1;">
-                                    <button type="submit" class="btn-primary" style="width: 100%;">Configure Account</button>
-                                </form>
-                                {% elif account.in_soundcork %}
-                                <form action="/admin/addDevice/{{ device.id }}" method="POST" style="flex: 1;">
-                                    <button type="submit" class="btn-primary" style="width: 100%;">Add to Soundcork</button>
-                                </form>
-                                {% endif %}
-                            {% elif device.reachable and device.marge_server != "Soundcork" %}
-                            <form action="/admin/switchToSoundcork/{{ device.id }}" method="POST" style="flex: 1;">
-                                <button type="submit" class="btn-primary" style="width: 100%;">Switch to Soundcork</button>
-                            </form>
-                            {% endif %}
+            <div id="accounts-section" aria-busy="true">
+                {% if accounts %}
+                <div class="admin-skeleton-stack" aria-hidden="true">
+                    {% for _ in accounts.values() %}
+                    <div class="admin-skeleton-section">
+                        <div class="admin-skeleton-line skeleton-title"></div>
+                        <div class="admin-skeleton-line skeleton-subline"></div>
+                        <div class="admin-skeleton-grid">
+                            <div class="admin-skeleton-card"></div>
+                            <div class="admin-skeleton-card"></div>
+                            <div class="admin-skeleton-card"></div>
                         </div>
                     </div>
                     {% endfor %}
                 </div>
                 {% else %}
-                <div class="empty-state">
-                    <div class="empty-icon">🔊</div>
-                    <p>No devices found for this account</p>
+                <div class="admin-skeleton-stack" aria-hidden="true">
+                    <div class="admin-skeleton-section">
+                        <div class="admin-skeleton-line skeleton-title"></div>
+                        <div class="admin-skeleton-grid">
+                            <div class="admin-skeleton-card"></div>
+                            <div class="admin-skeleton-card"></div>
+                        </div>
+                    </div>
                 </div>
                 {% endif %}
-            </section>
-            {% endfor %}
+            </div>
         </div>
     </main>
 
@@ -156,19 +91,78 @@
     </footer>
 
     <script>
-        // Progressive enhancement: disable Rename until the label is changed.
-        // Forms still submit correctly without JS (button stays enabled).
-        document.querySelectorAll('.account-rename-form').forEach(form => {
-            const input = form.querySelector('input[name="label"]');
-            const button = form.querySelector('button[type="submit"]');
-            if (!input || !button) return;
-            const sync = () => {
-                const v = input.value.trim();
-                button.disabled = (v === '' || v === input.dataset.original);
-            };
-            sync();
-            input.addEventListener('input', sync);
-        });
+        (function () {
+            const FRAGMENT_URL = '/admin/devices-fragment';
+            const accountsSection = document.getElementById('accounts-section');
+            const statusEl = document.getElementById('admin-status');
+            const statusText = statusEl ? statusEl.querySelector('.admin-status-text') : null;
+            const refreshBtn = document.getElementById('admin-refresh-btn');
+
+            function bindRenameForms() {
+                document.querySelectorAll('.account-rename-form').forEach(form => {
+                    const input = form.querySelector('input[name="label"]');
+                    const button = form.querySelector('button[type="submit"]');
+                    if (!input || !button) return;
+                    const sync = () => {
+                        const v = input.value.trim();
+                        button.disabled = (v === '' || v === input.dataset.original);
+                    };
+                    sync();
+                    input.addEventListener('input', sync);
+                });
+            }
+
+            function setLoading(loading, opts) {
+                opts = opts || {};
+                if (!statusEl) return;
+                if (loading) {
+                    statusEl.classList.add('is-loading');
+                    statusEl.classList.remove('is-error', 'is-done');
+                    if (statusText) statusText.textContent = opts.message || 'Discovering devices on your network…';
+                    if (accountsSection) accountsSection.setAttribute('aria-busy', 'true');
+                    if (refreshBtn) refreshBtn.disabled = true;
+                } else {
+                    statusEl.classList.remove('is-loading');
+                    statusEl.classList.add(opts.error ? 'is-error' : 'is-done');
+                    if (statusText) statusText.textContent = opts.message || 'Up to date';
+                    if (accountsSection) accountsSection.removeAttribute('aria-busy');
+                    if (refreshBtn) refreshBtn.disabled = false;
+                    if (!opts.error) {
+                        setTimeout(() => statusEl.classList.add('is-hidden'), 1500);
+                    }
+                }
+            }
+
+            async function loadDevices(force) {
+                statusEl && statusEl.classList.remove('is-hidden');
+                setLoading(true, {
+                    message: force
+                        ? 'Re-scanning network for devices…'
+                        : 'Discovering devices on your network…',
+                });
+                try {
+                    const url = force ? FRAGMENT_URL + '?force=true' : FRAGMENT_URL;
+                    const res = await fetch(url, { headers: { 'Accept': 'text/html' } });
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const html = await res.text();
+                    if (accountsSection) accountsSection.innerHTML = html;
+                    bindRenameForms();
+                    setLoading(false, { message: 'Devices up to date' });
+                } catch (err) {
+                    setLoading(false, {
+                        error: true,
+                        message: 'Failed to load devices — click Refresh to retry',
+                    });
+                }
+            }
+
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', () => loadDevices(true));
+            }
+
+            // Kick off initial fetch as soon as the page is parsed.
+            loadDevices(false);
+        })();
     </script>
 </body>
 </html>

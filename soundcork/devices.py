@@ -190,12 +190,14 @@ def is_reachable(device: upnpclient.upnp.Device) -> bool:
 
 def addr_is_reachable(device_address: str) -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2)  # Timeout in case of port not open
+    s.settimeout(1)  # Timeout in case of port not open
     try:
-        s.connect((device_address, 22))  # Port ,Here 22 is port
+        s.connect((device_address, 22))
         return True
-    except:
+    except Exception:
         return False
+    finally:
+        s.close()
 
 
 def add_device(device: upnpclient.upnp.Device) -> bool:

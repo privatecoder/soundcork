@@ -15,6 +15,9 @@ from soundcork.model import ContentItem
 
 logger = logging.getLogger(__name__)
 DISCOVERY_TIMEOUT_SECONDS = 5
+# Skip a redundant UPnP rescan if one ran this recently. Force a fresh scan
+# with refresh_discovery(force=True) when the user explicitly asks for it.
+DISCOVERY_CACHE_TTL_SECONDS = 30
 
 # After sending play/stop, poll device state briefly so snappy devices show
 # their new state on the next dashboard render. Slow devices (TuneIn streams
@@ -67,10 +70,26 @@ class Speakers:
         self._st_discovery = SoundTouchDiscovery(areDevicesVerified=True)
         self._datastore = datastore
         self._settings = settings
-        self.refresh_discovery()
+        self._last_discovery_ts: float = 0.0
+        self.refresh_discovery(force=True)
 
-    def refresh_discovery(self) -> None:
+    def refresh_discovery(self, force: bool = False) -> bool:
+        """Run UPnP discovery, or skip it if a recent run is still cached.
+
+        Returns True if a fresh scan was actually performed.
+        """
+        now = time.monotonic()
+        if not force and (now - self._last_discovery_ts) < DISCOVERY_CACHE_TTL_SECONDS:
+            return False
         self._st_discovery.DiscoverDevices(timeout=DISCOVERY_TIMEOUT_SECONDS)
+        self._last_discovery_ts = now
+        return True
+
+    def discovery_age_seconds(self) -> float:
+        """Seconds since the last successful discovery, for UI display."""
+        if self._last_discovery_ts == 0.0:
+            return float("inf")
+        return time.monotonic() - self._last_discovery_ts
 
     def soundtouch_devices(self) -> dict:
         return self._st_discovery.VerifiedDevices

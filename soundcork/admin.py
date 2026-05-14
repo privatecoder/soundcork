@@ -10,6 +10,7 @@ This is a DRAFT version of the admin ui. The display code is not functioning cor
 
 import logging
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 
 from bosesoundtouchapi.soundtouchclient import SoundTouchDevice  # type: ignore
@@ -114,57 +115,102 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         except Exception:
             return account_id
 
-    @router.get("/admin/", response_class=HTMLResponse)
-    async def admin(request: Request):
-        speakers.refresh_discovery()
+    def _build_accounts(
+        refresh: bool, check_reachability: bool
+    ) -> tuple[dict[str, "CombinedAccount"], list[str]]:
+        """Build the {account_id: CombinedAccount} mapping plus device IP list.
+
+        Heavy operations are gated:
+        - `refresh=True` forces a fresh UPnP scan (~5s). Otherwise uses cache.
+        - `check_reachability=True` does parallel port-22 checks (~1s total).
+        """
+        if refresh:
+            speakers.refresh_discovery(force=True)
         combined_devices = speakers.all_devices()
 
-        unassociated_devices = []
         account_ids = datastore.list_accounts()
-        accounts = {}
+        accounts: dict[str, CombinedAccount] = {}
 
         for account_id in account_ids:
             if account_id:
-                account = CombinedAccount(
+                accounts[account_id] = CombinedAccount(
                     id=account_id,
                     label=_account_label(account_id),
                     devices=[],
                     in_soundcork=True,
                 )
-                accounts[account_id] = account
 
-        # sort devices from speakers.all_devices() into accounts. also check
-        # to see if they are reachable via ssh (which really only matters in
-        # an admin context)
-        sorted_keys = sorted(combined_devices)
-        for key in sorted_keys:
+        for key in sorted(combined_devices):
             dev = combined_devices[key]
-            # assign to account
             account_id = dev.account
             if account_id:
-                found_account = accounts.get(account_id, None)
-                if not found_account:
-                    found_account = CombinedAccount(
+                found = accounts.get(account_id)
+                if not found:
+                    found = CombinedAccount(
                         id=account_id,
                         label=_account_label(account_id),
                         devices=[],
                         in_soundcork=False,
                     )
-                    accounts[account_id] = found_account
+                    accounts[account_id] = found
+                found.devices.append(dev)
 
-                found_account.devices.append(dev)
-            else:
-                unassociated_devices.append(dev)
-            # also check to see if it's available via ssh
-            dev.reachable = addr_is_reachable(dev.ip)
+        if check_reachability:
+            # Parallel port-22 checks across all devices (each capped at ~1s).
+            devices_with_ip = [
+                d for d in combined_devices.values() if d.ip
+            ]
+            if devices_with_ip:
+                with ThreadPoolExecutor(
+                    max_workers=min(8, len(devices_with_ip))
+                ) as pool:
+                    results = pool.map(
+                        addr_is_reachable, [d.ip for d in devices_with_ip]
+                    )
+                    for d, reachable in zip(devices_with_ip, results):
+                        d.reachable = reachable
 
         device_ips = [d.ip for d in combined_devices.values() if d.ip]
-        base_url_check = _check_base_url(settings.base_url, device_ips)
+        return accounts, device_ips
 
+    @router.get("/admin/", response_class=HTMLResponse)
+    async def admin(request: Request):
+        """Render the admin page shell instantly using cached state.
+
+        The slow UPnP rescan and reachability checks are deferred to
+        /admin/devices-fragment, which the page fetches client-side.
+        """
+        accounts, device_ips = _build_accounts(
+            refresh=False, check_reachability=False
+        )
+        base_url_check = _check_base_url(settings.base_url, device_ips)
         return templates.TemplateResponse(
             request=request,
             name="admin/index.html",
-            context={"accounts": accounts, "base_url_check": base_url_check},
+            context={
+                "accounts": accounts,
+                "base_url_check": base_url_check,
+                "devices_loading": True,
+            },
+        )
+
+    @router.get("/admin/devices-fragment", response_class=HTMLResponse)
+    async def admin_devices_fragment(request: Request):
+        """HTML fragment with fresh discovery + reachability data.
+
+        Called by the admin page after initial render so the user sees
+        the page instantly instead of waiting ~5-13s for UPnP + SSH probes.
+        """
+        force = request.query_params.get("force") == "true"
+        # On the auto-fetched render, only force a fresh scan if the cache
+        # is stale; the user can hit Refresh to override that.
+        accounts, _ = _build_accounts(
+            refresh=force, check_reachability=True
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/_devices_fragment.html",
+            context={"accounts": accounts},
         )
 
     @router.post("/admin/switchToSoundcork/{device_id}")
