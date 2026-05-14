@@ -239,19 +239,27 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 f"Rendering dashboard for account {account_id} with {len(devices)} devices and {len(presets)} presets"
             )
 
-            # Get selected content_item and device from cookies
-            selected_content_item = decode_cookie_value(
-                request.cookies.get("soundcork_selected_content_item_name")
-            )
             selected_device = decode_cookie_value(
                 request.cookies.get("soundcork_selected_device")
             )
             selected_device_id = request.cookies.get("soundcork_selected_device_id")
-            is_playing = request.cookies.get("soundcork_is_playing", "false")
 
+            # Cookie-backed resume target for the Play button when device is idle
+            resume_content_id = request.cookies.get(
+                "soundcork_selected_content_item_id"
+            )
+
+            # Pull live state from the selected device (no cookie state for these)
             volume = None
+            now_playing = None
             if selected_device_id:
                 volume = speakers.get_volume(selected_device_id)
+                now_playing = speakers.get_now_playing(selected_device_id)
+
+            selected_content_item = (
+                now_playing.get("content_name") if now_playing else None
+            )
+            is_playing = "true" if (now_playing and now_playing["is_playing"]) else "false"
 
             return templates.TemplateResponse(
                 request=request,
@@ -266,6 +274,8 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "selected_device_id": selected_device_id,
                     "is_playing": is_playing,
                     "volume": volume,
+                    "now_playing": now_playing,
+                    "resume_content_id": resume_content_id,
                     "error": None,
                 },
             )
@@ -273,15 +283,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         except Exception as e:
             logger.error(f"Error rendering dashboard: {e}")
 
-            # Still try to get selected content_item/device from cookies
-            selected_content_item = decode_cookie_value(
-                request.cookies.get("soundcork_selected_content_item_name")
-            )
             selected_device = decode_cookie_value(
                 request.cookies.get("soundcork_selected_device")
             )
             selected_device_id = request.cookies.get("soundcork_selected_device_id")
-            is_playing = request.cookies.get("soundcork_is_playing", "false")
 
             return templates.TemplateResponse(
                 request=request,
@@ -291,11 +296,12 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "account_label": "Unknown",
                     "devices": [],
                     "presets": [],
-                    "selected_content_item": selected_content_item,
+                    "selected_content_item": None,
                     "selected_device": selected_device,
                     "selected_device_id": selected_device_id,
-                    "is_playing": is_playing,
+                    "is_playing": "false",
                     "volume": None,
+                    "now_playing": None,
                     "error": "Error loading dashboard data",
                 },
             )

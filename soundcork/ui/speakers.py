@@ -216,6 +216,35 @@ class Speakers:
             logger.error(f"Error stopping playback on device {device_id}: {e}")
             return False
 
+    def get_now_playing(self, device_id: str) -> dict | None:
+        """Get the device's current playback state.
+
+        Returns:
+            dict with `content_name` (str|None), `source` (str), `play_state` (str),
+            `is_playing` (bool), or None on failure.
+        """
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return None
+        try:
+            client = SoundTouchClient(cd.st_device)
+            np = client.GetNowPlayingStatus()
+            play_state = (getattr(np, "PlayStatus", "") or "").upper()
+            content_name = (
+                getattr(np, "StationName", None)
+                or getattr(np, "Track", None)
+                or getattr(np, "Artist", None)
+            )
+            return {
+                "content_name": content_name,
+                "source": getattr(np, "Source", "") or "",
+                "play_state": play_state,
+                "is_playing": play_state in {"PLAY_STATE", "BUFFERING_STATE", "PLAY", "BUFFERING"},
+            }
+        except Exception as e:
+            logger.error(f"Error getting now-playing on device {device_id}: {e}")
+            return None
+
     def get_volume(self, device_id: str) -> dict | None:
         """Get the current volume state of a device.
 

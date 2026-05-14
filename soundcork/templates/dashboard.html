@@ -16,9 +16,11 @@
             </div>
 
             <div class="header-status">
-                {% if selected_device or selected_content_item %}
-                <div class="now-playing">
-                    <div class="now-playing-label">Now Playing</div>
+                {% if selected_device %}
+                <div class="now-playing {% if is_playing == 'true' %}is-active{% endif %}">
+                    <div class="now-playing-label">
+                        {% if is_playing == 'true' %}Now Playing{% else %}Idle{% endif %}
+                    </div>
                     <div class="now-playing-content">
                         {% if selected_content_item %}
                             <span class="content-name">{{ selected_content_item }}</span>
@@ -26,9 +28,7 @@
                             <span class="content-placeholder">Select a preset</span>
                         {% endif %}
                     </div>
-                    {% if selected_device %}
                     <div class="playing-device">on {{ selected_device }}</div>
-                    {% endif %}
                 </div>
                 {% endif %}
             </div>
@@ -61,16 +61,16 @@
                 </div>
                 {% endif %}
 
-                {% if selected_content_item and selected_device_id %}
+                {% if selected_device_id %}
                     {% if is_playing == "true" %}
                     <form action="/miniapp/stop" method="post">
                         <button type="submit" class="btn-control btn-stop" title="Stop playback">
                             <span aria-hidden="true">■</span>
                         </button>
                     </form>
-                    {% else %}
+                    {% elif resume_content_id %}
                     <form action="/miniapp/play" method="post">
-                        <button type="submit" class="btn-control btn-play" title="Start playback">
+                        <button type="submit" class="btn-control btn-play" title="Resume last preset">
                             <span aria-hidden="true">▶</span>
                         </button>
                     </form>
