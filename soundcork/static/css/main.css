@@ -245,6 +245,61 @@ main {
     background: #218838;
 }
 
+/* Volume controls */
+.volume-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs);
+    background: var(--color-border-light);
+    border-radius: 999px;
+}
+
+.btn-volume {
+    width: 2rem;
+    height: 2rem;
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    line-height: 1;
+}
+
+.btn-volume:hover {
+    background: var(--color-primary);
+    color: white;
+}
+
+.btn-volume-display {
+    min-width: 3rem;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--color-text);
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    transition: background var(--transition-fast);
+}
+
+.btn-volume-display:hover {
+    background: var(--color-surface);
+}
+
+.btn-volume-display.is-muted {
+    color: var(--color-error);
+}
+
+.volume-value {
+    font-variant-numeric: tabular-nums;
+}
+
 .header-user {
     display: flex;
     align-items: center;

@@ -31,6 +31,8 @@ EDITABLE_SOURCES = [
     ("DEEZER", "Deezer"),
 ]
 
+VOLUME_STEP = 5
+
 
 def encode_cookie_value(value: object) -> str:
     """Encode text for Set-Cookie's latin-1 constrained header value."""
@@ -247,6 +249,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             selected_device_id = request.cookies.get("soundcork_selected_device_id")
             is_playing = request.cookies.get("soundcork_is_playing", "false")
 
+            volume = None
+            if selected_device_id:
+                volume = speakers.get_volume(selected_device_id)
+
             return templates.TemplateResponse(
                 request=request,
                 name="dashboard.html",
@@ -259,6 +265,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "selected_device": selected_device,
                     "selected_device_id": selected_device_id,
                     "is_playing": is_playing,
+                    "volume": volume,
                     "error": None,
                 },
             )
@@ -288,6 +295,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "selected_device": selected_device,
                     "selected_device_id": selected_device_id,
                     "is_playing": is_playing,
+                    "volume": None,
                     "error": "Error loading dashboard data",
                 },
             )
@@ -466,6 +474,41 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         except Exception as e:
             logger.error(f"Error in stop endpoint: {e}")
             return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.post("/miniapp/volume-up")
+    async def volume_up(request: Request):
+        """Increase volume on the selected device by VOLUME_STEP."""
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        current = speakers.get_volume(selected_device_id)
+        if current is not None:
+            speakers.set_volume(
+                selected_device_id, min(100, current["actual"] + VOLUME_STEP)
+            )
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.post("/miniapp/volume-down")
+    async def volume_down(request: Request):
+        """Decrease volume on the selected device by VOLUME_STEP."""
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        current = speakers.get_volume(selected_device_id)
+        if current is not None:
+            speakers.set_volume(
+                selected_device_id, max(0, current["actual"] - VOLUME_STEP)
+            )
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.post("/miniapp/mute")
+    async def mute_toggle(request: Request):
+        """Toggle mute on the selected device."""
+        selected_device_id = request.cookies.get("soundcork_selected_device_id")
+        if not selected_device_id:
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        speakers.toggle_mute(selected_device_id)
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
 
     @router.post("/miniapp/logout")
     async def logout(request: Request):

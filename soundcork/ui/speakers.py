@@ -215,3 +215,52 @@ class Speakers:
         except Exception as e:
             logger.error(f"Error stopping playback on device {device_id}: {e}")
             return False
+
+    def get_volume(self, device_id: str) -> dict | None:
+        """Get the current volume state of a device.
+
+        Returns:
+            dict with keys 'actual' (int 0-100) and 'muted' (bool), or None on failure
+        """
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return None
+        try:
+            client = SoundTouchClient(cd.st_device)
+            vol = client.GetVolume()
+            return {
+                "actual": getattr(vol, "Actual", 0),
+                "muted": getattr(vol, "IsMuted", False),
+            }
+        except Exception as e:
+            logger.error(f"Error getting volume on device {device_id}: {e}")
+            return None
+
+    def set_volume(self, device_id: str, level: int) -> bool:
+        """Set the volume level (0-100) on a device."""
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        level = max(0, min(100, int(level)))
+        try:
+            client = SoundTouchClient(cd.st_device)
+            client.SetVolumeLevel(level)
+            logger.info(f"Set volume to {level} on device {device_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting volume on device {device_id}: {e}")
+            return False
+
+    def toggle_mute(self, device_id: str) -> bool:
+        """Toggle mute on a device."""
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            client.Mute()
+            logger.info(f"Toggled mute on device {device_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error toggling mute on device {device_id}: {e}")
+            return False

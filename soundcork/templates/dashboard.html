@@ -34,6 +34,33 @@
             </div>
 
             <div class="header-controls">
+                {% if selected_device_id and volume %}
+                <div class="volume-controls" aria-label="Volume controls">
+                    <form action="/miniapp/volume-down" method="post">
+                        <button type="submit" class="btn-control btn-volume" title="Volume down">
+                            <span aria-hidden="true">−</span>
+                        </button>
+                    </form>
+                    <form action="/miniapp/mute" method="post">
+                        <button
+                            type="submit"
+                            class="btn-volume-display {% if volume.muted %}is-muted{% endif %}"
+                            title="{% if volume.muted %}Unmute{% else %}Mute{% endif %}"
+                            aria-label="Volume {{ volume.actual }} {% if volume.muted %}(muted){% endif %}">
+                            <span class="volume-value">{{ volume.actual }}</span>
+                            {% if volume.muted %}
+                            <span class="volume-mute-icon" aria-hidden="true">🔇</span>
+                            {% endif %}
+                        </button>
+                    </form>
+                    <form action="/miniapp/volume-up" method="post">
+                        <button type="submit" class="btn-control btn-volume" title="Volume up">
+                            <span aria-hidden="true">+</span>
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+
                 {% if selected_content_item and selected_device_id %}
                     {% if is_playing == "true" %}
                     <form action="/miniapp/stop" method="post">
