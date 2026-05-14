@@ -828,15 +828,17 @@ textarea:focus {
 
 .preset-name {
     font-weight: 500;
+    color: var(--color-text);
+    white-space: nowrap;
 }
 
 .preset-source {
-    color: var(--color-text-secondary);
+    color: var(--color-text);
     font-size: var(--font-size-xs);
 }
 
 .preset-location {
-    color: var(--color-text-secondary);
+    color: var(--color-text);
     max-width: 200px;
 }
 
