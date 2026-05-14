@@ -101,15 +101,15 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="slot">Preset Slot</label>
-                                <input
-                                    type="number"
-                                    id="slot"
-                                    name="slot"
-                                    min="1"
-                                    max="6"
-                                    required
-                                    {% if edit_preset %}value="{{ edit_preset.id }}"{% endif %}
-                                    {% if edit_preset %}disabled{% endif %}>
+                                <select id="slot" name="slot" required {% if edit_preset %}disabled{% endif %}>
+                                    <option value="">Select a slot</option>
+                                    <option value="1" {% if edit_preset and edit_preset.id == '1' %}selected{% endif %}>1</option>
+                                    <option value="2" {% if edit_preset and edit_preset.id == '2' %}selected{% endif %}>2</option>
+                                    <option value="3" {% if edit_preset and edit_preset.id == '3' %}selected{% endif %}>3</option>
+                                    <option value="4" {% if edit_preset and edit_preset.id == '4' %}selected{% endif %}>4</option>
+                                    <option value="5" {% if edit_preset and edit_preset.id == '5' %}selected{% endif %}>5</option>
+                                    <option value="6" {% if edit_preset and edit_preset.id == '6' %}selected{% endif %}>6</option>
+                                </select>
                                 <span class="form-hint">Choose a slot from 1 to 6</span>
                             </div>
 
