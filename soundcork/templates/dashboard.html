@@ -70,7 +70,10 @@
 
             <div class="dashboard-grid">
                 <section class="dashboard-section presets-section" aria-labelledby="presets-heading">
-                    <h2 id="presets-heading">Presets</h2>
+                    <div class="section-header">
+                        <h2 id="presets-heading">Presets</h2>
+                        <a href="/miniapp/presets" class="section-link">Manage</a>
+                    </div>
                     {% if presets %}
                     <ol class="presets-grid">
                         {% for preset in presets %}

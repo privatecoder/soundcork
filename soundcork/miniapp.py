@@ -19,6 +19,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+EDITABLE_SOURCES = [
+    ("INTERNET_RADIO", "Internet Radio"),
+    ("TUNEIN", "TuneIn"),
+    ("STORED_MUSIC", "Local Media"),
+    ("SPOTIFY", "Spotify"),
+    ("AMAZON", "Amazon Music"),
+    ("DEEZER", "Deezer"),
+]
+
 
 def encode_cookie_value(value: object) -> str:
     """Encode text for Set-Cookie's latin-1 constrained header value."""
@@ -468,5 +477,141 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         response.delete_cookie("soundcork_is_playing")
         logger.info("User logged out")
         return response
+
+    @router.get("/miniapp/presets", response_class=HTMLResponse)
+    async def presets_page(request: Request):
+        """Display preset management page."""
+        try:
+            account_id = request.cookies.get("soundcork_account_id", "")
+            account_label = decode_cookie_value(
+                request.cookies.get("soundcork_account_label"), "Unknown Account"
+            )
+
+            if not account_id:
+                return RedirectResponse(url="/miniapp/login", status_code=303)
+
+            if not datastore.account_exists(account_id):
+                response = RedirectResponse(url="/miniapp/login", status_code=303)
+                response.delete_cookie("soundcork_account_id")
+                response.delete_cookie("soundcork_account_label")
+                return response
+
+            presets = datastore.get_presets(account_id)
+            edit_preset = None
+
+            # Check if editing a preset
+            edit_id = request.query_params.get("edit")
+            if edit_id:
+                for preset in presets:
+                    if preset.id == edit_id:
+                        edit_preset = preset
+                        break
+
+            return templates.TemplateResponse(
+                request=request,
+                name="presets.html",
+                context={
+                    "account_id": account_id,
+                    "account_label": account_label,
+                    "presets": presets,
+                    "edit_preset": edit_preset,
+                    "sources": EDITABLE_SOURCES,
+                    "error": None,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Error rendering presets page: {e}")
+            return templates.TemplateResponse(
+                request=request,
+                name="presets.html",
+                context={
+                    "account_id": "",
+                    "account_label": "Unknown",
+                    "presets": [],
+                    "edit_preset": None,
+                    "sources": EDITABLE_SOURCES,
+                    "error": "Error loading presets",
+                },
+            )
+
+    @router.post("/miniapp/presets/save")
+    async def save_preset(request: Request):
+        """Add or update a preset."""
+        try:
+            account_id = request.cookies.get("soundcork_account_id", "")
+            if not account_id:
+                return RedirectResponse(url="/miniapp/login", status_code=303)
+
+            form_data = await request.form()
+            slot = form_data.get("slot", "").strip()
+            name = form_data.get("name", "").strip()
+            source = form_data.get("source", "").strip()
+            location = form_data.get("location", "").strip()
+            container_art = form_data.get("container_art", "").strip() or ""
+
+            # Validate inputs
+            if not slot or not name or not source or not location:
+                return RedirectResponse(url="/miniapp/presets?error=All fields required", status_code=303)
+
+            try:
+                slot_num = int(slot)
+                if slot_num < 1 or slot_num > 6:
+                    return RedirectResponse(url="/miniapp/presets?error=Slot must be 1-6", status_code=303)
+            except ValueError:
+                return RedirectResponse(url="/miniapp/presets?error=Slot must be a number", status_code=303)
+
+            # Load current presets
+            presets = datastore.get_presets(account_id)
+
+            # Remove existing preset with same slot
+            presets = [p for p in presets if p.id != slot]
+
+            # Create new preset
+            new_preset: "Preset" = Preset(
+                id=slot,
+                name=name,
+                source=source,
+                type="stationurl",
+                location=location,
+                container_art=container_art,
+            )
+            presets.append(new_preset)
+
+            # Save presets
+            datastore.save_presets(account_id, "", presets)
+            logger.info(f"Preset saved: slot {slot}, name {name}")
+            return RedirectResponse(url="/miniapp/presets", status_code=303)
+
+        except Exception as e:
+            logger.error(f"Error saving preset: {e}")
+            return RedirectResponse(url="/miniapp/presets?error=Failed to save preset", status_code=303)
+
+    @router.post("/miniapp/presets/delete")
+    async def delete_preset(request: Request):
+        """Delete a preset by slot ID."""
+        try:
+            account_id = request.cookies.get("soundcork_account_id", "")
+            if not account_id:
+                return RedirectResponse(url="/miniapp/login", status_code=303)
+
+            form_data = await request.form()
+            preset_id = form_data.get("preset_id", "").strip()
+
+            if not preset_id:
+                return RedirectResponse(url="/miniapp/presets", status_code=303)
+
+            # Load current presets and filter out the one to delete
+            presets = datastore.get_presets(account_id)
+            presets = [p for p in presets if p.id != preset_id]
+
+            # Save presets
+            datastore.save_presets(account_id, "", presets)
+            logger.info(f"Preset deleted: {preset_id}")
+            return RedirectResponse(url="/miniapp/presets", status_code=303)
+
+        except Exception as e:
+            logger.error(f"Error deleting preset: {e}")
+            return RedirectResponse(url="/miniapp/presets?error=Failed to delete preset", status_code=303)
 
     return router
