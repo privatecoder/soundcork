@@ -279,6 +279,32 @@ class Speakers:
         self._wait_for_play_state(device_id, expected_playing=False)
         return True
 
+    def select_source(
+        self, device_id: str, source: str, source_account: str = ""
+    ) -> bool:
+        """Switch a device to a local input source (BLUETOOTH, AUX, etc.)."""
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            logger.error(f"Device {device_id} not found or not online")
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            item = BCContentItem(
+                source=source,
+                sourceAccount=source_account or None,
+            )
+            client.SelectContentItem(item)
+            logger.info(
+                f"Switched device {device_id} to source {source}"
+                f"{f' (account={source_account})' if source_account else ''}"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"Error switching device {device_id} to source {source}: {e}"
+            )
+            return False
+
     def get_now_playing(self, device_id: str) -> dict | None:
         """Get the device's current playback state.
 

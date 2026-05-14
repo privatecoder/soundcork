@@ -157,6 +157,39 @@
                             <p>No presets configured yet</p>
                         </div>
                         {% endif %}
+
+                        <div class="input-sources" aria-label="Local input sources">
+                            <div class="input-sources-divider">or play from</div>
+                            <div class="input-sources-buttons">
+                                <form action="/miniapp/select-source" method="post" style="display:contents;">
+                                    <input type="hidden" name="source" value="BLUETOOTH">
+                                    <button
+                                        type="submit"
+                                        class="input-chip{% if now_playing and now_playing.source == 'BLUETOOTH' %} is-active{% endif %}"
+                                        {% if now_playing and now_playing.source == 'BLUETOOTH' %}aria-pressed="true"{% endif %}>
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"></polyline>
+                                        </svg>
+                                        <span>Bluetooth</span>
+                                    </button>
+                                </form>
+                                <form action="/miniapp/select-source" method="post" style="display:contents;">
+                                    <input type="hidden" name="source" value="AUX">
+                                    <input type="hidden" name="source_account" value="AUX">
+                                    <button
+                                        type="submit"
+                                        class="input-chip{% if now_playing and now_playing.source == 'AUX' %} is-active{% endif %}"
+                                        {% if now_playing and now_playing.source == 'AUX' %}aria-pressed="true"{% endif %}>
+                                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <circle cx="12" cy="12" r="3"></circle>
+                                            <path d="M12 1v6m0 10v6"></path>
+                                            <path d="M9 7h6"></path>
+                                        </svg>
+                                        <span>Aux In</span>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
                     {% endif %}
                 </section>
 
@@ -221,6 +254,7 @@
         const PENDING_LABELS = {
             '/miniapp/play':                  'Starting\u2026',
             '/miniapp/select-content-item':   'Starting\u2026',
+            '/miniapp/select-source':         'Switching\u2026',
             '/miniapp/stop':                  'Stopping\u2026',
         };
 
@@ -334,6 +368,17 @@
                     }
                 });
             }
+
+            // Source chip (Bluetooth / Aux) active state
+            document.querySelectorAll('.input-chip').forEach(chip => {
+                const form = chip.closest('form');
+                const srcInput = form && form.querySelector('input[name="source"]');
+                const srcVal = srcInput ? srcInput.value : '';
+                const active = (srcVal === s.source);
+                chip.classList.toggle('is-active', active);
+                if (active) chip.setAttribute('aria-pressed', 'true');
+                else chip.removeAttribute('aria-pressed');
+            });
         }
 
         async function pollStatus() {

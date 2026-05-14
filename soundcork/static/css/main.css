@@ -568,6 +568,116 @@ main {
     white-space: nowrap;
 }
 
+/* Local input source chips (Bluetooth / Aux) */
+.input-sources {
+    margin-top: var(--spacing-xl);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.input-sources-divider {
+    text-align: center;
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-secondary);
+    position: relative;
+}
+
+.input-sources-divider::before,
+.input-sources-divider::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: calc(50% - 4rem);
+    height: 1px;
+    background: var(--color-border);
+}
+
+.input-sources-divider::before { left: 0; }
+.input-sources-divider::after { right: 0; }
+
+.input-sources-buttons {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.input-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    box-shadow: var(--shadow-xs);
+}
+
+.input-chip:hover {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}
+
+.input-chip:active {
+    transform: translateY(0);
+}
+
+.input-chip.is-active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.18), var(--shadow-sm);
+}
+
+.input-chip.is-active:hover {
+    background: var(--color-primary-hover);
+    color: white;
+}
+
+.input-chip svg {
+    flex-shrink: 0;
+}
+
+.input-chip.is-submitting {
+    position: relative;
+    color: transparent;
+    pointer-events: none;
+}
+
+.input-chip.is-submitting > * {
+    visibility: hidden;
+}
+
+.input-chip.is-submitting::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
+    border: 2px solid var(--color-primary);
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+.input-chip.is-active.is-submitting::after {
+    border-color: white;
+    border-right-color: transparent;
+}
+
 /* Devices section */
 .devices-grid {
     display: grid;

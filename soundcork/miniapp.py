@@ -423,6 +423,45 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             logger.error(f"Error selecting content_item: {e}")
             return RedirectResponse(url="/miniapp/dashboard", status_code=303)
 
+    @router.post("/miniapp/select-source")
+    async def select_source(request: Request):
+        """Switch the selected device to a local input source (BT, AUX, ...)."""
+        try:
+            selected_device_id = request.cookies.get("soundcork_selected_device_id")
+            if not selected_device_id:
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+            form_data = await request.form()
+            source = str(form_data.get("source", "")).strip().upper()
+            source_account = str(form_data.get("source_account", "")).strip()
+
+            if source not in {"BLUETOOTH", "AUX"}:
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+            # The Bose source registry tags AUX with sourceAccount="AUX"
+            # but Bluetooth has no sourceAccount.
+            if source == "AUX" and not source_account:
+                source_account = "AUX"
+
+            success = speakers.select_source(
+                selected_device_id, source, source_account
+            )
+
+            response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            if success:
+                response.set_cookie(
+                    key="soundcork_pending_action",
+                    value=f"play:{int(time.time())}",
+                    max_age=PENDING_ACTION_MAX_AGE_SECONDS,
+                    httponly=True,
+                    samesite="strict",
+                )
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in select-source endpoint: {e}")
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
     @router.post("/miniapp/select-device")
     async def select_device(request: Request):
         """Handle device selection and set cookie."""
