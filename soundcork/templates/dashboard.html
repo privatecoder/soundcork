@@ -71,13 +71,13 @@
                 {% endif %}
 
                 {% if selected_device_id %}
-                    {% if is_playing == "true" %}
+                    {% if is_playing == "true" and not (now_playing and now_playing.is_local_source) %}
                     <form action="/miniapp/stop" method="post">
                         <button type="submit" class="btn-control btn-stop" title="Stop playback">
                             <span aria-hidden="true">■</span>
                         </button>
                     </form>
-                    {% elif resume_content_id %}
+                    {% elif resume_content_id and not (now_playing and now_playing.is_local_source) %}
                     <form action="/miniapp/play" method="post">
                         <button type="submit" class="btn-control btn-play" title="Resume last preset">
                             <span aria-hidden="true">▶</span>

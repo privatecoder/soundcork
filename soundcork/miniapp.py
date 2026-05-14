@@ -57,15 +57,25 @@ def get_device_image(product_code: str) -> str:
 
 
 def _read_pending_action(
-    cookie_value: str | None, is_playing: bool
+    cookie_value: str | None,
+    is_playing: bool,
+    current_source: str | None = None,
 ) -> tuple[str | None, bool]:
     """Parse the pending-action cookie and decide if the device state matches.
 
+    Cookie format:
+        play:<ts>            — resolves when is_playing becomes True
+        stop:<ts>            — resolves when is_playing becomes False
+        source-<NAME>:<ts>   — resolves when the device's source matches NAME
+                               (e.g. BLUETOOTH, AUX). is_playing is ignored;
+                               for these local inputs we can't assume audio
+                               actually starts.
+
     Returns:
-        (pending_action, resolved): pending_action is "play" or "stop" if the
-        device state has NOT yet caught up to the requested action; None
-        otherwise. resolved is True when the cookie can be deleted (state
-        matches or cookie is stale/invalid).
+        (pending_action, resolved): pending_action is "play" | "stop" |
+        "source" if the device state has NOT yet caught up; None otherwise.
+        resolved is True when the cookie can be deleted (state matches or
+        cookie is stale/invalid).
     """
     if not cookie_value or ":" not in cookie_value:
         return None, False
@@ -77,12 +87,20 @@ def _read_pending_action(
     age = int(time.time()) - ts
     if age > PENDING_ACTION_MAX_AGE_SECONDS:
         return None, True  # stale — clear it
-    expected_playing = action == "play"
-    if is_playing == expected_playing:
-        return None, True  # state caught up — clear it
-    if action not in {"play", "stop"}:
-        return None, True
-    return action, False
+
+    if action.startswith("source-"):
+        target = action.split("-", 1)[1].upper()
+        if (current_source or "").upper() == target:
+            return None, True  # source caught up — clear it
+        return "source", False
+
+    if action in {"play", "stop"}:
+        expected_playing = action == "play"
+        if is_playing == expected_playing:
+            return None, True  # state caught up — clear it
+        return action, False
+
+    return None, True
 
 
 def get_miniapp_router(datastore: DataStore, speakers: Speakers):
@@ -303,11 +321,12 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             is_playing_bool = bool(now_playing and now_playing["is_playing"])
             is_playing = "true" if is_playing_bool else "false"
 
-            # Pending-action handling: if user just clicked play/stop and the
-            # device hasn't transitioned yet, auto-refresh the dashboard.
+            # Pending-action handling: if user just clicked play/stop/source
+            # and the device hasn't transitioned yet, auto-refresh the dashboard.
             pending_action, pending_resolved = _read_pending_action(
                 request.cookies.get("soundcork_pending_action"),
                 is_playing_bool,
+                now_playing.get("source") if now_playing else None,
             )
             auto_refresh = (
                 DASHBOARD_AUTO_REFRESH_SECONDS if pending_action else None
@@ -451,7 +470,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             if success:
                 response.set_cookie(
                     key="soundcork_pending_action",
-                    value=f"play:{int(time.time())}",
+                    value=f"source-{source}:{int(time.time())}",
                     max_age=PENDING_ACTION_MAX_AGE_SECONDS,
                     httponly=True,
                     samesite="strict",
@@ -634,6 +653,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         pending_action, _ = _read_pending_action(
             request.cookies.get("soundcork_pending_action"),
             is_playing_bool,
+            now_playing.get("source") if now_playing else None,
         )
 
         return JSONResponse(
