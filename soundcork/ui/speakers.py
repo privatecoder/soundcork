@@ -19,12 +19,14 @@ DISCOVERY_TIMEOUT_SECONDS = 5
 # with refresh_discovery(force=True) when the user explicitly asks for it.
 DISCOVERY_CACHE_TTL_SECONDS = 30
 
-# After sending play/stop, poll device state briefly so snappy devices show
-# their new state on the next dashboard render. Slow devices (TuneIn streams
+# Short post-action poll so snappy devices show their new state on the
+# first dashboard render after the redirect. Slow devices (TuneIn streams
 # can take 10-20s to buffer) are handled separately via a pending-action
-# cookie + meta refresh on the dashboard, so we don't block the redirect.
-STATE_POLL_MAX_ATTEMPTS = 10
-STATE_POLL_INTERVAL_SECONDS = 0.2
+# cookie + meta refresh on the dashboard, so we keep this very short — the
+# important UX is that the user gets a redirect quickly with visible
+# button feedback, not that we wait for the device to fully confirm.
+STATE_POLL_MAX_ATTEMPTS = 3
+STATE_POLL_INTERVAL_SECONDS = 0.15
 
 
 class CombinedDevice(BaseModel):

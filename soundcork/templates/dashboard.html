@@ -208,5 +208,25 @@
     <footer class="footer">
         <p>&copy; 2024 Soundcork • Local Bose API</p>
     </footer>
+
+    <script>
+        // Progressive enhancement: show an immediate "loading" state on
+        // any form submission so the user knows the click registered, even
+        // while the server is waiting for the speaker to respond (TuneIn
+        // streams can take several seconds). Forms still work without JS.
+        document.querySelectorAll('main form').forEach(form => {
+            form.addEventListener('submit', () => {
+                const btn = form.querySelector('button[type="submit"]');
+                if (!btn || btn.disabled) return;
+                btn.classList.add('is-submitting');
+                btn.setAttribute('aria-busy', 'true');
+                // Failsafe: clear state if navigation didn't happen.
+                setTimeout(() => {
+                    btn.classList.remove('is-submitting');
+                    btn.removeAttribute('aria-busy');
+                }, 30000);
+            });
+        });
+    </script>
 </body>
 </html>

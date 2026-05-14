@@ -448,6 +448,84 @@ main {
     box-shadow: 0 0 0 6px rgba(0, 102, 255, 0.15), var(--shadow-md);
 }
 
+/* Form-submission loading feedback */
+.btn-control.is-submitting,
+.btn-volume.is-submitting,
+.btn-volume-display.is-submitting,
+.btn-logout.is-submitting,
+.btn-header-icon.is-submitting {
+    position: relative;
+    color: transparent;
+    pointer-events: none;
+}
+
+.btn-control.is-submitting > *,
+.btn-volume.is-submitting > *,
+.btn-volume-display.is-submitting > *,
+.btn-logout.is-submitting > *,
+.btn-header-icon.is-submitting > * {
+    visibility: hidden;
+}
+
+.btn-control.is-submitting::after,
+.btn-volume.is-submitting::after,
+.btn-volume-display.is-submitting::after,
+.btn-logout.is-submitting::after,
+.btn-header-icon.is-submitting::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    color: white;
+}
+
+.btn-volume.is-submitting::after,
+.btn-volume-display.is-submitting::after,
+.btn-logout.is-submitting::after,
+.btn-header-icon.is-submitting::after {
+    color: var(--color-primary);
+}
+
+.preset-card.is-submitting {
+    pointer-events: none;
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+.preset-card.is-submitting::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 102, 255, 0.18);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    z-index: 1;
+}
+
+.preset-card.is-submitting::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin: -1.375rem 0 0 -1.375rem;
+    border: 3px solid white;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    z-index: 2;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
 .preset-image {
     width: 100%;
     height: 100%;
