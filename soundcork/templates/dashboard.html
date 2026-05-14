@@ -238,7 +238,7 @@
             label.appendChild(document.createTextNode(pendingLabel));
         }
 
-        document.querySelectorAll('main form').forEach(form => {
+        document.querySelectorAll('form').forEach(form => {
             form.addEventListener('submit', async (e) => {
                 const btn = form.querySelector('button[type="submit"]');
                 if (!btn || btn.disabled) return;
