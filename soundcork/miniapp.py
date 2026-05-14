@@ -3,6 +3,7 @@ Endpoints for a miniapp UI.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
@@ -33,6 +34,11 @@ EDITABLE_SOURCES = [
 
 VOLUME_STEP = 5
 
+# How long the dashboard keeps auto-refreshing after a play/stop while waiting
+# for the device to confirm. Bose TuneIn streams can take 10-20s to buffer.
+PENDING_ACTION_MAX_AGE_SECONDS = 30
+DASHBOARD_AUTO_REFRESH_SECONDS = 3
+
 
 def encode_cookie_value(value: object) -> str:
     """Encode text for Set-Cookie's latin-1 constrained header value."""
@@ -48,6 +54,35 @@ def decode_cookie_value(value: str | None, default: str | None = None) -> str | 
 def get_device_image(product_code: str) -> str:
     """Map product code to device image file."""
     return DEVICE_IMAGE_MAP.get(product_code.lower(), DEFAULT_DEVICE_IMAGE)
+
+
+def _read_pending_action(
+    cookie_value: str | None, is_playing: bool
+) -> tuple[str | None, bool]:
+    """Parse the pending-action cookie and decide if the device state matches.
+
+    Returns:
+        (pending_action, resolved): pending_action is "play" or "stop" if the
+        device state has NOT yet caught up to the requested action; None
+        otherwise. resolved is True when the cookie can be deleted (state
+        matches or cookie is stale/invalid).
+    """
+    if not cookie_value or ":" not in cookie_value:
+        return None, False
+    action, _, ts_str = cookie_value.partition(":")
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return None, True
+    age = int(time.time()) - ts
+    if age > PENDING_ACTION_MAX_AGE_SECONDS:
+        return None, True  # stale — clear it
+    expected_playing = action == "play"
+    if is_playing == expected_playing:
+        return None, True  # state caught up — clear it
+    if action not in {"play", "stop"}:
+        return None, True
+    return action, False
 
 
 def get_miniapp_router(datastore: DataStore, speakers: Speakers):
@@ -259,9 +294,20 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             selected_content_item = (
                 now_playing.get("content_name") if now_playing else None
             )
-            is_playing = "true" if (now_playing and now_playing["is_playing"]) else "false"
+            is_playing_bool = bool(now_playing and now_playing["is_playing"])
+            is_playing = "true" if is_playing_bool else "false"
 
-            return templates.TemplateResponse(
+            # Pending-action handling: if user just clicked play/stop and the
+            # device hasn't transitioned yet, auto-refresh the dashboard.
+            pending_action, pending_resolved = _read_pending_action(
+                request.cookies.get("soundcork_pending_action"),
+                is_playing_bool,
+            )
+            auto_refresh = (
+                DASHBOARD_AUTO_REFRESH_SECONDS if pending_action else None
+            )
+
+            response = templates.TemplateResponse(
                 request=request,
                 name="dashboard.html",
                 context={
@@ -276,9 +322,14 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "volume": volume,
                     "now_playing": now_playing,
                     "resume_content_id": resume_content_id,
+                    "pending_action": pending_action,
+                    "auto_refresh": auto_refresh,
                     "error": None,
                 },
             )
+            if pending_resolved:
+                response.delete_cookie("soundcork_pending_action")
+            return response
 
         except Exception as e:
             logger.error(f"Error rendering dashboard: {e}")
@@ -302,6 +353,9 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "is_playing": "false",
                     "volume": None,
                     "now_playing": None,
+                    "resume_content_id": None,
+                    "pending_action": None,
+                    "auto_refresh": None,
                     "error": "Error loading dashboard data",
                 },
             )
@@ -343,14 +397,14 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 success = speakers.play_content_item(
                     selected_device_id, content_item_id
                 )
-                response.set_cookie(
-                    key="soundcork_is_playing",
-                    value="true" if success else "false",
-                    max_age=86400 * 30,
-                    httponly=False,
-                    samesite="strict",
-                )
                 if success:
+                    response.set_cookie(
+                        key="soundcork_pending_action",
+                        value=f"play:{int(time.time())}",
+                        max_age=PENDING_ACTION_MAX_AGE_SECONDS,
+                        httponly=True,
+                        samesite="strict",
+                    )
                     logger.info(
                         f"Started playback from preset click: content_item {content_item_id} on device {selected_device_id}"
                     )
@@ -431,10 +485,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
             if success:
                 response.set_cookie(
-                    key="soundcork_is_playing",
-                    value="true",
-                    max_age=86400 * 30,
-                    httponly=False,
+                    key="soundcork_pending_action",
+                    value=f"play:{int(time.time())}",
+                    max_age=PENDING_ACTION_MAX_AGE_SECONDS,
+                    httponly=True,
                     samesite="strict",
                 )
                 logger.info(
@@ -465,10 +519,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
             if success:
                 response.set_cookie(
-                    key="soundcork_is_playing",
-                    value="false",
-                    max_age=86400 * 30,
-                    httponly=False,
+                    key="soundcork_pending_action",
+                    value=f"stop:{int(time.time())}",
+                    max_age=PENDING_ACTION_MAX_AGE_SECONDS,
+                    httponly=True,
                     samesite="strict",
                 )
                 logger.info(f"Stopped playback on device {selected_device_id}")

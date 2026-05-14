@@ -16,9 +16,11 @@ from soundcork.model import ContentItem
 logger = logging.getLogger(__name__)
 DISCOVERY_TIMEOUT_SECONDS = 5
 
-# After sending play/stop, poll device state up to this many times with this
-# interval before giving up. The Bose device takes a moment to transition.
-STATE_POLL_MAX_ATTEMPTS = 15
+# After sending play/stop, poll device state briefly so snappy devices show
+# their new state on the next dashboard render. Slow devices (TuneIn streams
+# can take 10-20s to buffer) are handled separately via a pending-action
+# cookie + meta refresh on the dashboard, so we don't block the redirect.
+STATE_POLL_MAX_ATTEMPTS = 10
 STATE_POLL_INTERVAL_SECONDS = 0.2
 
 

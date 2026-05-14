@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if auto_refresh %}
+    <meta http-equiv="refresh" content="{{ auto_refresh }}; url=/miniapp/dashboard">
+    {% endif %}
     <title>Soundcork Dashboard</title>
     <link rel="stylesheet" href="/static/css/main.css">
 </head>
@@ -17,9 +20,17 @@
 
             <div class="header-status">
                 {% if selected_device %}
-                <div class="now-playing {% if is_playing == 'true' %}is-active{% endif %}">
+                <div class="now-playing {% if is_playing == 'true' %}is-active{% endif %} {% if pending_action %}is-pending{% endif %}">
                     <div class="now-playing-label">
-                        {% if is_playing == 'true' %}Now Playing{% else %}Idle{% endif %}
+                        {% if pending_action == 'play' %}
+                            <span class="loading-dot" aria-hidden="true"></span>Starting…
+                        {% elif pending_action == 'stop' %}
+                            <span class="loading-dot" aria-hidden="true"></span>Stopping…
+                        {% elif is_playing == 'true' %}
+                            Now Playing
+                        {% else %}
+                            Idle
+                        {% endif %}
                     </div>
                     <div class="now-playing-content">
                         {% if selected_content_item %}
@@ -111,11 +122,13 @@
                     {% if presets %}
                     <ol class="presets-grid">
                         {% for preset in presets %}
+                        {% set is_playing_preset = is_playing == 'true' and selected_content_item and selected_content_item == preset.name %}
                         <li>
                             <form action="/miniapp/select-content-item" method="post" style="display:contents;">
                                 <input type="hidden" name="content_item_id" value="{{ preset.id }}">
                                 <input type="hidden" name="content_item_name" value="{{ preset.name }}">
-                                <button type="submit" class="preset-card">
+                                <button type="submit" class="preset-card{% if is_playing_preset %} is-playing{% endif %}"
+                                    {% if is_playing_preset %}aria-pressed="true"{% endif %}>
                                     {% if preset.container_art %}
                                     <img src="{{ preset.container_art }}" alt="" class="preset-image">
                                     {% else %}

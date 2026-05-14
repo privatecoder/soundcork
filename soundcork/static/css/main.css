@@ -182,6 +182,32 @@ main {
     color: var(--color-primary);
 }
 
+.now-playing.is-pending {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+}
+
+.now-playing.is-pending .now-playing-label {
+    color: var(--color-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.loading-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    animation: loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes loading-pulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.1); }
+}
+
 .now-playing-label {
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
@@ -422,6 +448,12 @@ main {
 
 .preset-card:active {
     transform: translateY(-2px);
+}
+
+.preset-card.is-playing {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 6px rgba(0, 102, 255, 0.15), var(--shadow-md);
 }
 
 .preset-image {
