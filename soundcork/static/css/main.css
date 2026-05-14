@@ -1100,7 +1100,7 @@ textarea:focus {
     margin-top: var(--spacing-lg);
 }
 
-.device-card {
+.admin-devices-grid .device-card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
@@ -1112,16 +1112,16 @@ textarea:focus {
     gap: var(--spacing-md);
 }
 
-.device-card:hover {
+.admin-devices-grid .device-card:hover {
     box-shadow: var(--shadow-md);
     border-color: var(--color-primary);
 }
 
-.device-card.device-soundcork {
+.admin-devices-grid .device-card.device-soundcork {
     border-left: 4px solid var(--color-success);
 }
 
-.device-card.device-bose {
+.admin-devices-grid .device-card.device-bose {
     border-left: 4px solid var(--color-warning);
 }
 
