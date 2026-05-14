@@ -47,12 +47,31 @@
 
             {% for id, account in accounts.items() %}
             <section class="dashboard-section" aria-labelledby="account-{{ id }}-heading">
-                <h2 id="account-{{ id }}-heading">
-                    Account {{ account.id }}
-                    {% if not account.in_soundcork %}
-                    <span style="font-size: var(--font-size-sm); color: var(--color-text-secondary);">(Not configured)</span>
+                <div class="account-header">
+                    <div>
+                        <h2 id="account-{{ id }}-heading">{{ account.label }}</h2>
+                        <p class="account-id-line">
+                            Account ID: <code>{{ account.id }}</code>
+                            {% if not account.in_soundcork %}
+                            <span class="account-not-configured">(Not configured)</span>
+                            {% endif %}
+                        </p>
+                    </div>
+                    {% if account.in_soundcork %}
+                    <form action="/admin/renameAccount/{{ account.id }}" method="post" class="account-rename-form">
+                        <label for="rename-{{ account.id }}" class="sr-only">Rename account {{ account.id }}</label>
+                        <input
+                            type="text"
+                            id="rename-{{ account.id }}"
+                            name="label"
+                            value="{{ account.label }}"
+                            placeholder="Account label"
+                            maxlength="64"
+                            required>
+                        <button type="submit" class="btn-primary btn-small-primary">Rename</button>
+                    </form>
                     {% endif %}
-                </h2>
+                </div>
 
                 {% if account.devices %}
                 <div class="admin-devices-grid">

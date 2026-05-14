@@ -104,8 +104,15 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
     class CombinedAccount(BaseModel):
         id: str
+        label: str
         devices: list[CombinedDevice]
         in_soundcork: bool
+
+    def _account_label(account_id: str) -> str:
+        try:
+            return datastore.get_account_info(account_id)
+        except Exception:
+            return account_id
 
     @router.get("/admin/", response_class=HTMLResponse)
     async def admin(request: Request):
@@ -118,7 +125,12 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
         for account_id in account_ids:
             if account_id:
-                account = CombinedAccount(id=account_id, devices=[], in_soundcork=True)
+                account = CombinedAccount(
+                    id=account_id,
+                    label=_account_label(account_id),
+                    devices=[],
+                    in_soundcork=True,
+                )
                 accounts[account_id] = account
 
         # sort devices from speakers.all_devices() into accounts. also check
@@ -133,7 +145,10 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                 found_account = accounts.get(account_id, None)
                 if not found_account:
                     found_account = CombinedAccount(
-                        id=account_id, devices=[], in_soundcork=False
+                        id=account_id,
+                        label=_account_label(account_id),
+                        devices=[],
+                        in_soundcork=False,
                     )
                     accounts[account_id] = found_account
 
@@ -202,5 +217,22 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                 logger.info(f"added account from {hostname} success = {success}")
 
         return RedirectResponse(url=f"/admin/", status_code=HTTPStatus.FOUND)
+
+    @router.post("/admin/renameAccount/{account_id}")
+    async def rename_account(account_id: str, request: Request):
+        """Update an account's display label."""
+        if not datastore.account_exists(account_id):
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+        form_data = await request.form()
+        label_raw = form_data.get("label", "")
+        label = str(label_raw).strip() if isinstance(label_raw, str) else ""
+
+        if not label:
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+        datastore.save_account_info(account_id, label)
+        logger.info(f"Renamed account {account_id} to {label!r}")
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     return router
