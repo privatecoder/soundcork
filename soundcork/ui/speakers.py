@@ -15,6 +15,25 @@ from soundcork.model import ContentItem
 
 logger = logging.getLogger(__name__)
 DISCOVERY_TIMEOUT_SECONDS = 5
+
+# Sources that represent a device-local input (Bluetooth, line-in, AirPlay
+# session etc.) rather than a streaming/preset source. When the device is
+# on one of these, we display the source itself as the "now playing" label
+# and never highlight a preset tile — the device often retains stale
+# StationName/Track values from the previously played preset.
+LOCAL_SOURCE_LABELS = {
+    "BLUETOOTH": "Bluetooth",
+    "AUX": "Aux In",
+    "AIRPLAY": "AirPlay",
+    "ALEXA": "Alexa",
+    "NOTIFICATION": "Notification",
+    "QPLAY": "QPlay",
+    "UPNP": "UPnP",
+    "STORED_MUSIC_MEDIA_RENDERER": "Stored Music",
+    "OFF": "Off",
+    "STANDBY": "Standby",
+    "SLAVE_SOURCE": "Grouped",
+}
 # Skip a redundant UPnP rescan if one ran this recently. Force a fresh scan
 # with refresh_discovery(force=True) when the user explicitly asks for it.
 DISCOVERY_CACHE_TTL_SECONDS = 30
@@ -265,7 +284,8 @@ class Speakers:
 
         Returns:
             dict with `content_name` (str|None), `source` (str), `play_state` (str),
-            `is_playing` (bool), or None on failure.
+            `is_playing` (bool), `is_local_source` (bool — True for BT/AUX/etc.),
+            or None on failure.
         """
         cd = self.all_devices().get(device_id)
         if not cd or not cd.st_device:
@@ -274,14 +294,24 @@ class Speakers:
             client = SoundTouchClient(cd.st_device)
             np = client.GetNowPlayingStatus()
             play_state = (getattr(np, "PlayStatus", "") or "").upper()
-            content_name = (
-                getattr(np, "StationName", None)
-                or getattr(np, "Track", None)
-                or getattr(np, "Artist", None)
-            )
+            source = (getattr(np, "Source", "") or "").upper()
+            is_local = source in LOCAL_SOURCE_LABELS
+
+            if is_local:
+                # For local inputs, the device often retains StationName from
+                # the previous preset — ignore it and label with the source.
+                content_name = LOCAL_SOURCE_LABELS[source]
+            else:
+                content_name = (
+                    getattr(np, "StationName", None)
+                    or getattr(np, "Track", None)
+                    or getattr(np, "Artist", None)
+                )
+
             return {
                 "content_name": content_name,
-                "source": getattr(np, "Source", "") or "",
+                "source": source,
+                "is_local_source": is_local,
                 "play_state": play_state,
                 "is_playing": play_state in {"PLAY_STATE", "BUFFERING_STATE", "PLAY", "BUFFERING"},
             }

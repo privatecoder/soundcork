@@ -127,7 +127,11 @@
                         {% if presets %}
                         <ol class="presets-grid">
                             {% for preset in presets %}
-                            {% set is_playing_preset = is_playing == 'true' and selected_content_item and selected_content_item == preset.name %}
+                            {% set is_playing_preset = is_playing == 'true'
+                                and now_playing
+                                and not now_playing.is_local_source
+                                and selected_content_item
+                                and selected_content_item == preset.name %}
                             <li>
                                 <form action="/miniapp/select-content-item" method="post" style="display:contents;">
                                     <input type="hidden" name="content_item_id" value="{{ preset.id }}">
