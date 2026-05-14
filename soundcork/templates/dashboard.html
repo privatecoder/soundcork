@@ -210,21 +210,63 @@
     </footer>
 
     <script>
-        // Progressive enhancement: show an immediate "loading" state on
-        // any form submission so the user knows the click registered, even
-        // while the server is waiting for the speaker to respond (TuneIn
-        // streams can take several seconds). Forms still work without JS.
+        // Progressive enhancement: intercept playback/preset form submits,
+        // POST via fetch (so the browser doesn't show a "loading" tab),
+        // and update the now-playing label + button immediately. Reload
+        // the page once the server confirms. Forms still work without JS.
+        const PENDING_LABELS = {
+            '/miniapp/play':                  'Starting\u2026',
+            '/miniapp/select-content-item':   'Starting\u2026',
+            '/miniapp/stop':                  'Stopping\u2026',
+        };
+
+        function updateNowPlayingLabel(pendingLabel) {
+            const widget = document.querySelector('.now-playing');
+            const label = document.querySelector('.now-playing-label');
+            if (!widget || !label) return;
+            widget.classList.add('is-pending');
+            widget.classList.remove('is-active');
+            label.innerHTML = '';
+            const dot = document.createElement('span');
+            dot.className = 'loading-dot';
+            dot.setAttribute('aria-hidden', 'true');
+            label.appendChild(dot);
+            label.appendChild(document.createTextNode(pendingLabel));
+        }
+
         document.querySelectorAll('main form').forEach(form => {
-            form.addEventListener('submit', () => {
+            form.addEventListener('submit', async (e) => {
                 const btn = form.querySelector('button[type="submit"]');
                 if (!btn || btn.disabled) return;
+
                 btn.classList.add('is-submitting');
                 btn.setAttribute('aria-busy', 'true');
-                // Failsafe: clear state if navigation didn't happen.
-                setTimeout(() => {
-                    btn.classList.remove('is-submitting');
-                    btn.removeAttribute('aria-busy');
-                }, 30000);
+
+                const actionPath = new URL(form.action, window.location.href).pathname;
+                const pendingLabel = PENDING_LABELS[actionPath];
+
+                if (!pendingLabel) {
+                    // Volume / mute / logout / etc. — let the browser handle
+                    // it normally. The button spinner is enough feedback.
+                    return;
+                }
+
+                // Intercept so the browser tab doesn't show "loading" for
+                // several seconds while the speaker responds.
+                e.preventDefault();
+                updateNowPlayingLabel(pendingLabel);
+
+                try {
+                    await fetch(form.action, {
+                        method: form.method || 'POST',
+                        body: new FormData(form),
+                        credentials: 'same-origin',
+                        redirect: 'follow',
+                    });
+                } catch (err) {
+                    // Network error — still reload so the user sees current state.
+                }
+                window.location.reload();
             });
         });
     </script>
