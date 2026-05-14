@@ -3,6 +3,7 @@ Endpoints for a miniapp UI.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote
 
@@ -10,9 +11,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from soundcork.constants import DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
+from soundcork.constants import DEFAULT_DATESTR, DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
 from soundcork.datastore import DataStore
 from soundcork.ui.speakers import Speakers
+
+from soundcork.model import Preset as PresetModel
 
 if TYPE_CHECKING:
     from soundcork.model import Preset
@@ -567,14 +570,20 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             # Remove existing preset with same slot
             presets = [p for p in presets if p.id != slot]
 
-            # Create new preset
-            new_preset: "Preset" = Preset(
+            # Create new preset with required fields
+            now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', '.000+00:00')
+            new_preset = PresetModel(
                 id=slot,
                 name=name,
                 source=source,
                 type="stationurl",
                 location=location,
                 container_art=container_art,
+                created_on=now_str,
+                updated_on=now_str,
+                source_id=None,  # TuneIn streams don't require source_id
+                source_account=None,
+                is_presetable="true",
             )
             presets.append(new_preset)
 
