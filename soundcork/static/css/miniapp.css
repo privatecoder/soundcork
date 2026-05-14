@@ -119,6 +119,32 @@ header h1 {
     padding: var(--spacing-xl);
     width: 100%;
     max-width: 400px;
+    position: relative;
+}
+
+.login-admin-link {
+    position: absolute;
+    top: var(--spacing-md);
+    right: var(--spacing-md);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 8px;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.login-admin-link:hover {
+    background: var(--color-bg);
+    color: var(--color-primary);
+}
+
+.login-admin-link:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
 }
 
 .login-card h1 {
