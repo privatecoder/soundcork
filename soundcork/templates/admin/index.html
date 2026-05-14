@@ -65,6 +65,7 @@
                             id="rename-{{ account.id }}"
                             name="label"
                             value="{{ account.label }}"
+                            data-original="{{ account.label }}"
                             placeholder="Account label"
                             maxlength="64"
                             required>
@@ -155,5 +156,21 @@
     <footer class="footer">
         <p>&copy; 2024 Soundcork • Local Bose API</p>
     </footer>
+
+    <script>
+        // Progressive enhancement: disable Rename until the label is changed.
+        // Forms still submit correctly without JS (button stays enabled).
+        document.querySelectorAll('.account-rename-form').forEach(form => {
+            const input = form.querySelector('input[name="label"]');
+            const button = form.querySelector('button[type="submit"]');
+            if (!input || !button) return;
+            const sync = () => {
+                const v = input.value.trim();
+                button.disabled = (v === '' || v === input.dataset.original);
+            };
+            sync();
+            input.addEventListener('input', sync);
+        });
+    </script>
 </body>
 </html>

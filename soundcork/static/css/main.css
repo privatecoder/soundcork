@@ -1158,6 +1158,19 @@ textarea:focus {
     transform: scale(0.98);
 }
 
+.btn-primary:disabled {
+    background: var(--color-border);
+    color: var(--color-text-secondary);
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+}
+
+.btn-primary:disabled:hover {
+    background: var(--color-border);
+    box-shadow: none;
+}
+
 .btn-secondary {
     padding: var(--spacing-md) var(--spacing-lg);
     background: transparent;

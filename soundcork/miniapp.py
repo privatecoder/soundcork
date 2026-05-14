@@ -193,12 +193,18 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         try:
             # Get account from cookie
             account_id = request.cookies.get("soundcork_account_id", "")
-            account_label = decode_cookie_value(
-                request.cookies.get("soundcork_account_label"), "Unknown Account"
-            )
 
             if not account_id:
                 return RedirectResponse(url="/miniapp/login", status_code=303)
+
+            # Always fetch the current label from the datastore so renames
+            # made via /admin are reflected without re-logging in.
+            try:
+                account_label = datastore.get_account_info(account_id)
+            except Exception:
+                account_label = decode_cookie_value(
+                    request.cookies.get("soundcork_account_label"), "Unknown Account"
+                )
 
             # Verify account still exists
             if not datastore.account_exists(account_id):
@@ -589,12 +595,16 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         """Display preset management page."""
         try:
             account_id = request.cookies.get("soundcork_account_id", "")
-            account_label = decode_cookie_value(
-                request.cookies.get("soundcork_account_label"), "Unknown Account"
-            )
 
             if not account_id:
                 return RedirectResponse(url="/miniapp/login", status_code=303)
+
+            try:
+                account_label = datastore.get_account_info(account_id)
+            except Exception:
+                account_label = decode_cookie_value(
+                    request.cookies.get("soundcork_account_label"), "Unknown Account"
+                )
 
             if not datastore.account_exists(account_id):
                 response = RedirectResponse(url="/miniapp/login", status_code=303)
