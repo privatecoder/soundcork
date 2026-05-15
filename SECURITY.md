@@ -16,7 +16,8 @@ only from the same LAN or a trusted VPN.
 ## Sensitive Capabilities
 
 - `/admin` can discover speakers, rename/remove stored devices, copy speaker
-  state, write `/mnt/nv/OverrideSdkPrivateCfg.xml`, and reboot speakers.
+  state, write or delete `/mnt/nv/OverrideSdkPrivateCfg.xml`, set the speaker's
+  Marge account UUID during repair, and reboot speakers.
 - `/miniapp` can control playback, volume, local sources, presets, and groups.
 - Bose protocol endpoints under `/marge`, `/bmx`, `/service`, `/updates`, and
   `/media` are unauthenticated because SoundTouch speakers do not authenticate

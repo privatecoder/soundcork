@@ -46,7 +46,10 @@ Important routes:
 - `POST /marge/oauth/device/{device_id}/music/musicprovider/{provider_id}/token/{token_type}`
 
 Responses are XML with Bose-compatible structure. Preserve tag names, MIME
-types, status behavior, and date formats when changing these routes.
+types, status behavior, and date formats when changing these routes. The device
+update route (`PUT /marge/streaming/account/{account}/device/{device_id}`) is
+also used by speakers during local `/name` renames; it must stay responsive,
+return `200 OK`, and echo fields such as `macaddress` that firmware sends.
 
 The OAuth route currently handles Spotify provider `15`; unsupported providers
 return `404`.
@@ -108,15 +111,18 @@ Routes:
 - `GET /admin/`
 - `GET /admin/devices-fragment`
 - `POST /admin/addDevice/{device_id}`
+- `POST /admin/repairDevice/{device_id}`
+- `POST /admin/resetDevice/{device_id}`
 - `POST /admin/switchToSoundcork/{device_id}`
 - `POST /admin/renameDevice/{device_id}`
 - `POST /admin/removeDevice/{device_id}`
 - `POST /admin/renameAccount/{account_id}`
 
 The admin UI discovers speakers, checks port-22 reachability, imports speaker
-data, writes `OverrideSdkPrivateCfg.xml`, reboots speakers, and lets operators
-rename/remove stored devices. The UI requires trusted LAN access; it is not
-authenticated.
+data, writes or deletes `OverrideSdkPrivateCfg.xml`, reboots speakers, repairs
+orphaned Soundcork assignments, and lets operators rename/remove stored devices.
+`repairDevice` is a compatibility alias for the current Add flow. The UI
+requires trusted LAN access; it is not authenticated.
 
 ### Miniapp UI
 

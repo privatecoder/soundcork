@@ -37,7 +37,8 @@ writes `/mnt/nv/OverrideSdkPrivateCfg.xml` instead:
 
 Deleting the override file and rebooting returns the speaker to the firmware
 defaults, but it does not restore Bose cloud features now that the Bose service
-has ended.
+has ended. The admin **Remove from Soundcork** and **Reset to Bose** actions both
+perform this cleanup over SSH when the speaker is reachable.
 
 ## Emulated Surfaces
 
@@ -63,6 +64,10 @@ services.
 
 - `BASE_URL` must be reachable by speakers, not just by browsers.
 - When `BASE_URL` changes, rerun **Switch to Soundcork** on every speaker.
+- Speaker renames use the local `/name` API and then call back into Soundcork's
+  Marge device-update route. Keep Soundcork responsive while that request is in
+  flight; blocking the server can make firmware report an Allegro `/name`
+  timeout even though the speaker is reachable.
 - Grouping behavior is partly direct speaker-to-speaker behavior and partly
   Marge/service-state behavior; Soundcork stores group XML and the miniapp now
   exposes group/ungroup controls.

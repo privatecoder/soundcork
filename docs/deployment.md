@@ -147,3 +147,9 @@ Then open `/admin/`. If speakers are not listed:
 
 If a configured speaker shows `UNKNOWN_SOURCE_ERROR`, verify `BASE_URL` from the
 speaker's point of view and rerun **Switch to Soundcork**.
+
+If `/admin` shows a reachable speaker with `Marge: Soundcork` but `In Soundcork:
+No`, the speaker still has Soundcork's override file but Soundcork has no
+matching datastore record. Use **Add to Soundcork** to repair/adopt it into an
+account, or **Reset to Bose** to delete the override and reboot back to firmware
+defaults.

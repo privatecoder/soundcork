@@ -2,6 +2,8 @@
 
 A self-hosted replacement for the Bose SoundTouch cloud, so your speakers keep working now that Bose cloud support has ended.
 
+This repository is a heavily modified fork of the original Soundcork project, focused on keeping Bose SoundTouch devices usable after the official Bose cloud API shutdown.
+
 ## What this is
 
 [Bose's SoundTouch cloud support ended on May 6, 2026, after being extended from the original February 18, 2026 shutdown date.](https://www.bose.com/soundtouch-end-of-life) Bose's updated SoundTouch app still supports local-only functions, but cloud-backed features such as cloud presets, built-in music services, internet radio, and future system updates no longer have Bose's cloud infrastructure behind them.
@@ -11,7 +13,7 @@ A self-hosted replacement for the Bose SoundTouch cloud, so your speakers keep w
 - **Presets keep playing** — TuneIn / internet radio / your custom streams
 - **The original Bose SoundTouch app still works** for basic playback (it talks to the speaker over its local port, not to the cloud)
 - **A built-in web UI (`/miniapp`)** lets you start/stop, switch sources, manage presets, change volume, and group/ungroup speakers from any browser
-- **A web admin (`/admin`)** discovers speakers on your network, walks you through onboarding, and lets you rename or remove stored speakers/accounts
+- **A web admin (`/admin`)** discovers speakers on your network, walks you through onboarding, and lets you rename, repair, remove, or reset speakers/accounts
 
 The change soundcork pushes to the speaker is intentionally minimal and reversible (see "What soundcork changes on your speaker" below).
 
@@ -33,6 +35,8 @@ docker compose up -d
 Then open `http://<your-host-LAN-ip>:8001/admin`. The admin UI can discover speakers immediately, but completing onboarding still requires shell access on each speaker.
 
 For a new speaker/account, prepare the USB stick described below, boot each speaker with it once, and wait until `/admin` shows **Reachable: Yes**. After that, the admin UI can copy the speaker data, write the soundcork override, and reboot the speaker.
+
+If `/admin` shows a speaker that is already pointed at Soundcork but is not in Soundcork's datastore, use **Add to Soundcork** to repair it. If the speaker should go back to the firmware defaults instead, use **Reset to Bose**.
 
 ---
 
@@ -278,19 +282,20 @@ That keeps shell access enabled across future reboots without leaving the USB st
 
 If `/admin` still shows **Reachable: No** after the USB boot, retry with a freshly formatted USB stick and no extra root files. If that still fails, connect the speaker via Ethernet for the initial setup; this has helped during firmware 27.0.6 testing, though the exact cause may be USB detection, network reachability, or both.
 
-Once a speaker shows **"Reachable: Yes"** on `/admin`, soundcork can finish onboarding it for you with one click.
+Once a speaker shows **"Reachable: Yes"** on `/admin`, soundcork can finish onboarding it for you with one click. If more than one Soundcork account exists and the speaker does not report a `margeAccountUUID`, the admin UI asks which account should own the speaker.
 
 ---
 
 ## What soundcork changes on your speaker
 
-Soundcork writes **one file** to the speaker, leaves the original Bose config untouched, and reboots once. That's it.
+For normal onboarding, Soundcork writes **one override file** to the speaker, leaves the original Bose config untouched, and reboots once.
 
 | File on the speaker | Owner | Soundcork action |
 |---|---|---|
 | `/opt/Bose/etc/SoundTouchSdkPrivateCfg.xml` | Bose firmware (original config) | **Never modified.** |
 | `/mnt/nv/OverrideSdkPrivateCfg.xml` | Persistent override read by the SDK if present | **Created** by the admin "Switch to Soundcork" action. Points the four cloud URLs (marge, stats, swUpdate, bmxRegistry) at your soundcork host. |
 | `/mnt/nv/BoseApp-Persistence/1/Sources.xml` | Speaker's local source/credential database | **Read only**, copied into soundcork's `DATA_DIR` so soundcork can serve the same source list back to the device. Never written. |
+| Speaker Marge account UUID | Speaker NVRAM | **Only updated during repair/adoption** when the speaker has no `margeAccountUUID`; Soundcork posts `/setMargeAccount` so future `/info` calls report the chosen account. |
 
 The override file soundcork writes looks like this (with `{SC_BASE_URL}` substituted from your `BASE_URL`):
 
@@ -312,7 +317,9 @@ The presence of `OverrideSdkPrivateCfg.xml` makes the SoundTouch SDK use those U
 
 ### Reverting a speaker to Bose
 
-Just delete the override file and reboot. The speaker will fall back to the original firmware config and behave exactly as it did before soundcork. Because Bose cloud support ended on May 6, 2026, this does not restore Bose cloud features; it only removes soundcork's override cleanly.
+Use **Remove from Soundcork** in `/admin` for a configured speaker, or **Reset to Bose** for an orphaned speaker that is pointed at Soundcork but missing from the datastore. Both delete the override file over SSH and reboot when the speaker is reachable.
+
+Manually, delete the override file and reboot. The speaker will fall back to the original firmware config and behave exactly as it did before soundcork. Because Bose cloud support ended on May 6, 2026, this does not restore Bose cloud features; it only removes soundcork's override cleanly.
 
 ```sh
 ssh root@<speaker-ip>
