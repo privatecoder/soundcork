@@ -2,6 +2,11 @@
 private.py
 .env.private
 
+# Local soundcork datastore (default DATA_DIR=./data — contains account
+# IDs, source tokens, presets and other per-device state)
+/data/
+/soundcork/data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
