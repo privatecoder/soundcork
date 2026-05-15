@@ -499,17 +499,13 @@ class Speakers:
                 client.AddZoneMembers(
                     [ZoneMember(ipAddress=other.ip, deviceId=other_id)]
                 )
-                logger.info(
-                    f"Added device {other_id} to zone mastered by {master_id}"
-                )
+                logger.info(f"Added device {other_id} to zone mastered by {master_id}")
                 self._sync_zone_volume(master_id, [other_id])
             else:
                 # Create a new zone with `primary` as master, `other` as slave.
                 client = SoundTouchClient(primary.st_device)
                 client.CreateZoneFromDevices(primary.st_device, [other.st_device])
-                logger.info(
-                    f"Created new zone: master={primary_id}, slave={other_id}"
-                )
+                logger.info(f"Created new zone: master={primary_id}, slave={other_id}")
                 self._sync_zone_volume(primary_id, [other_id])
             return True
         except Exception as e:
@@ -589,9 +585,7 @@ class Speakers:
                 f"to drop slave {device_id} ({cd.ip})"
             )
             client.RemoveZoneMembers([slave_member])
-            logger.info(
-                f"Removed slave {device_id} from zone mastered by {master_id}"
-            )
+            logger.info(f"Removed slave {device_id} from zone mastered by {master_id}")
             return True
         except Exception:
             logger.exception(

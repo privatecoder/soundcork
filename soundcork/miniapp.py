@@ -5,7 +5,7 @@ Endpoints for a miniapp UI.
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Request
@@ -236,7 +236,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 return response
 
             combined_devices = speakers.all_devices()
-            devices: list[dict[str, str]] = []
+            devices: list[dict[str, Any]] = []
             presets: list["Preset"] = []
 
             for device_id in datastore.list_devices(account_id):
@@ -352,9 +352,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "master_device_id": master_id,
                     "master_name": id_to_name.get(master_id),
                     "peer_ids": peer_ids,
-                    "peer_names": [
-                        id_to_name.get(mid, mid) for mid in peer_ids
-                    ],
+                    "peer_names": [id_to_name.get(mid, mid) for mid in peer_ids],
                 }
 
             selected_content_item = (

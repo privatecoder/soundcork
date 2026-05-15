@@ -11,8 +11,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from soundcork.config import Settings
-from soundcork.datastore import DataStore
 from soundcork.constants import SPEAKER_OVERRIDE_SDK_LOCATION
+from soundcork.datastore import DataStore
 from soundcork.devices import (
     add_device_by_ip,
     addr_is_reachable,
@@ -295,14 +295,11 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
         if combined_device and combined_device.st_device:
             hostname = combined_device.st_device.Host
-            if (
-                combined_device.marge_server == "Soundcork"
-                and addr_is_reachable(hostname)
+            if combined_device.marge_server == "Soundcork" and addr_is_reachable(
+                hostname
             ):
                 ok = remove_file_from_speaker(hostname, SPEAKER_OVERRIDE_SDK_LOCATION)
-                logger.info(
-                    f"removed override on {hostname}: success={ok}"
-                )
+                logger.info(f"removed override on {hostname}: success={ok}")
                 reboot_speaker(hostname)
                 speakers.clear_device(device_id)
 
