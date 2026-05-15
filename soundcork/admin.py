@@ -11,6 +11,7 @@ This is a DRAFT version of the admin ui. The display code is not functioning cor
 import logging
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from http import HTTPStatus
 
 from bosesoundtouchapi.soundtouchclient import SoundTouchDevice  # type: ignore
@@ -100,6 +101,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
     from fastapi.templating import Jinja2Templates
 
     templates = Jinja2Templates(directory="templates")
+    templates.env.globals["current_year"] = lambda: datetime.now().year
 
     router = APIRouter(tags=["admin"])
 

@@ -105,6 +105,7 @@ def _read_pending_action(
 
 def get_miniapp_router(datastore: DataStore, speakers: Speakers):
     templates = Jinja2Templates(directory="templates")
+    templates.env.globals["current_year"] = lambda: datetime.now().year
 
     router = APIRouter(tags=["miniapp"])
 
