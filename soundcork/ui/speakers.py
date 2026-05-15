@@ -427,9 +427,12 @@ class Speakers:
                     "role": getattr(m, "DeviceRole", "") or "",
                 }
             )
+        # Bose's `senderIsMaster` flag is unreliable (we've seen it set true
+        # on a slave's response). The trustworthy way to tell if THIS device
+        # is the zone master is to compare its id against master_device_id.
         return {
             "master_device_id": master_id,
-            "is_master": bool(getattr(zone, "IsZoneMaster", False)),
+            "is_master": master_id == device_id,
             "members": members,
         }
 

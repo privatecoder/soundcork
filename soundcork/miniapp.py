@@ -325,25 +325,32 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             online_ids = [d["device_id"] for d in devices if d["status"] == "online"]
             zone_map = speakers.get_all_zones(online_ids) if online_ids else {}
             id_to_name = {d["device_id"]: d["name"] for d in devices}
+
+            # Each speaker's GetZoneStatus is inconsistent: a master usually
+            # lists every slave, but a slave often only lists itself (Bose
+            # firmware quirk). Union all responses, keyed by master_device_id,
+            # so every member sees every other member as a peer.
+            zone_full_members: dict[str, set[str]] = {}
+            for did, zd in zone_map.items():
+                bucket = zone_full_members.setdefault(zd["master_device_id"], set())
+                bucket.add(did)
+                bucket.add(zd["master_device_id"])
+                for m in zd["members"]:
+                    if m["device_id"]:
+                        bucket.add(m["device_id"])
+
             for d in devices:
                 z = zone_map.get(d["device_id"])
                 if not z:
                     d["zone"] = None
                     continue
-                # Members from the master's POV include the master itself; from
-                # a slave's POV they only include the master. Normalise.
-                member_ids = [m["device_id"] for m in z["members"] if m["device_id"]]
-                if z["is_master"]:
-                    peer_ids = [mid for mid in member_ids if mid != d["device_id"]]
-                else:
-                    peer_ids = [
-                        mid for mid in member_ids if mid != d["device_id"]
-                    ] + [z["master_device_id"]]
-                    peer_ids = list({mid for mid in peer_ids if mid != d["device_id"]})
+                master_id = z["master_device_id"]
+                full = zone_full_members.get(master_id, set())
+                peer_ids = sorted(mid for mid in full if mid != d["device_id"])
                 d["zone"] = {
                     "is_master": z["is_master"],
-                    "master_device_id": z["master_device_id"],
-                    "master_name": id_to_name.get(z["master_device_id"]),
+                    "master_device_id": master_id,
+                    "master_name": id_to_name.get(master_id),
                     "peer_ids": peer_ids,
                     "peer_names": [
                         id_to_name.get(mid, mid) for mid in peer_ids

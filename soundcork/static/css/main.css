@@ -736,32 +736,49 @@ main {
 
 .device-card {
     list-style: none;
-}
-
-.device-button {
-    width: 100%;
-    padding: var(--spacing-lg);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-surface);
-    cursor: pointer;
-    display: grid;
-    grid-template-columns: 4rem 1fr auto;
-    gap: var(--spacing-lg);
-    align-items: center;
-    transition: all var(--transition-base);
     box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    transition: all var(--transition-base);
 }
 
-.device-button:hover:not(:disabled) {
-    background: var(--color-primary-light);
+.device-card.device-online:hover {
     border-color: var(--color-primary);
     box-shadow: var(--shadow-md);
     transform: translateX(4px);
 }
 
-.device-button:active:not(:disabled) {
+.device-card.device-online:active {
     transform: translateX(2px);
+}
+
+.device-card.device-card-selected {
+    border-color: var(--color-primary);
+    border-width: 2px;
+    background: var(--color-primary-light);
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.15), var(--shadow-md);
+}
+
+.device-card.device-card-selected .device-name {
+    color: var(--color-primary);
+}
+
+.device-button {
+    width: 100%;
+    padding: var(--spacing-lg);
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 4rem 1fr auto;
+    gap: var(--spacing-lg);
+    align-items: center;
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
+    transition: background var(--transition-fast);
 }
 
 .device-button:disabled {
@@ -769,140 +786,25 @@ main {
     cursor: not-allowed;
 }
 
-.device-button.is-selected {
-    border-color: var(--color-primary);
-    border-width: 2px;
-    background: var(--color-primary-light);
-    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.15), var(--shadow-md);
-}
-
-.device-button.is-selected .device-name {
-    color: var(--color-primary);
-}
-
-/* Multi-room group panel — inline under each device card */
-.device-group {
-    margin-top: calc(-1 * var(--spacing-xs));
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    overflow: hidden;
-    transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.device-card-grouped .device-group {
-    border-color: var(--color-primary);
-    background: var(--color-primary-light);
-}
-
-.device-group:hover {
-    border-color: var(--color-primary);
-}
-
-.device-group-summary {
-    list-style: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-sm) var(--spacing-md);
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    color: var(--color-text-secondary);
-    user-select: none;
-    transition: background var(--transition-fast);
-}
-
-.device-group-summary::-webkit-details-marker { display: none; }
-.device-group-summary::marker { content: ""; }
-
-.device-group-summary:hover {
-    background: var(--color-border-light);
-}
-
-.device-card-grouped .device-group-summary:hover {
-    background: rgba(0, 102, 255, 0.08);
-}
-
-.device-group-summary-label {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    min-width: 0;
-    flex: 1;
-}
-
-.device-group-summary-label.is-active {
-    color: var(--color-primary);
-    font-weight: 600;
-}
-
-.device-group-icon {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-    opacity: 0.7;
-}
-
-.device-group-summary-label.is-active .device-group-icon {
-    opacity: 1;
-}
-
-.device-group-summary-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.device-group-chevron {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-    color: var(--color-text-secondary);
-    opacity: 0.6;
-    transition: transform var(--transition-fast), opacity var(--transition-fast);
-}
-
-.device-group[open] .device-group-chevron {
-    transform: rotate(180deg);
-    opacity: 0.9;
-}
-
-.device-card-grouped .device-group-chevron {
-    color: var(--color-primary);
-    opacity: 0.7;
-}
-
-.device-group-body {
-    padding: var(--spacing-md);
-    border-top: 1px solid var(--color-border);
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
-}
-
-.device-card-grouped .device-group-body {
-    border-top-color: rgba(0, 102, 255, 0.25);
-}
-
+/* Multi-room grouping — peer chips live inside the device card, below
+   the main device row. Always visible when other speakers are online. */
 .device-group-peers {
     display: flex;
     flex-wrap: wrap;
     gap: var(--spacing-xs);
+    padding: 0 var(--spacing-lg) var(--spacing-lg);
 }
 
 .group-peer-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px 6px 10px;
+    padding: 8px 14px 8px 12px;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 999px;
     color: var(--color-text);
-    font-size: var(--font-size-xs);
+    font-size: var(--font-size-sm);
     font-weight: 600;
     cursor: pointer;
     transition: transform var(--transition-fast), background var(--transition-fast),
@@ -911,8 +813,8 @@ main {
 }
 
 .group-peer-chip-icon {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
     opacity: 0.55;
     transition: opacity var(--transition-fast);
@@ -947,44 +849,6 @@ main {
     box-shadow: 0 1px 3px rgba(220, 53, 69, 0.3);
 }
 
-.device-group-leave {
-    display: flex;
-    justify-content: flex-end;
-    margin: 0;
-}
-
-.btn-group-leave {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px 6px 10px;
-    background: transparent;
-    border: 1px solid var(--color-error);
-    border-radius: 999px;
-    color: var(--color-error);
-    font-size: var(--font-size-xs);
-    font-weight: 600;
-    cursor: pointer;
-    transition: background var(--transition-fast), color var(--transition-fast),
-                box-shadow var(--transition-fast), transform var(--transition-fast);
-}
-
-.btn-group-leave svg {
-    width: 12px;
-    height: 12px;
-    flex-shrink: 0;
-}
-
-.btn-group-leave:hover {
-    background: var(--color-error);
-    color: white;
-    box-shadow: 0 1px 3px rgba(220, 53, 69, 0.3);
-    transform: translateY(-1px);
-}
-
-.btn-group-leave:active {
-    transform: translateY(0);
-}
 
 .device-image {
     width: 4rem;
