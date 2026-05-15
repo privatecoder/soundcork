@@ -29,8 +29,11 @@ class Settings(BaseSettings):
     base_url: str = Field("", validation_alias="BASE_URL")
 
     # Local directory where soundcork stores Accounts.json, Sources.xml,
-    # Presets.xml, Recents.xml, and per-device data.
-    data_dir: str = Field("", validation_alias="DATA_DIR")
+    # Presets.xml, Recents.xml, and per-device data.  Defaults to ./data
+    # relative to whatever directory the server is launched from.  For
+    # Docker, override with an absolute path that matches your volume
+    # mount (e.g. DATA_DIR=/soundcork/data).
+    data_dir: str = Field("./data", validation_alias="DATA_DIR")
 
     # Spotify OAuth (optional — leave empty to disable).
     spotify_client_id: str = Field("", validation_alias="SPOTIFY_CLIENT_ID")

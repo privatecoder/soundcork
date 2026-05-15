@@ -4,7 +4,7 @@ import random
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from http import HTTPStatus
-from os import listdir, mkdir, path, remove, rmdir, walk
+from os import listdir, makedirs, mkdir, path, remove, rmdir, walk
 from random import randint
 from typing import Optional
 
@@ -53,6 +53,14 @@ class DataStore:
     def __init__(self) -> None:
         logger.info("Initiating Datastore")
         self.data_dir = settings.data_dir
+        if self.data_dir and not path.exists(self.data_dir):
+            try:
+                makedirs(self.data_dir, exist_ok=True)
+                logger.info(f"Created data_dir at {path.abspath(self.data_dir)}")
+            except OSError as e:
+                logger.error(
+                    f"Could not create data_dir {self.data_dir!r}: {e}"
+                )
 
     def poweron_devices_dir(self) -> str:
         """returns the top-level directory that stores poweron info for all devices"""
