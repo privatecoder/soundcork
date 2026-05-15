@@ -14,9 +14,8 @@ from fastapi.templating import Jinja2Templates
 
 from soundcork.constants import DEFAULT_DATESTR, DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
 from soundcork.datastore import DataStore
-from soundcork.ui.speakers import Speakers
-
 from soundcork.model import Preset as PresetModel
+from soundcork.ui.speakers import Speakers
 
 if TYPE_CHECKING:
     from soundcork.model import Preset
@@ -34,10 +33,10 @@ EDITABLE_SOURCES = [
 
 VOLUME_STEP = 5
 
-# How long the dashboard keeps auto-refreshing after a play/stop while waiting
-# for the device to confirm. Bose TuneIn streams can take 10-20s to buffer.
+# How long the dashboard shows a pending action while waiting for the device to
+# confirm. Bose TuneIn streams can take 10-20s to buffer; the dashboard JS polls
+# /miniapp/status during this window.
 PENDING_ACTION_MAX_AGE_SECONDS = 30
-DASHBOARD_AUTO_REFRESH_SECONDS = 3
 
 
 def encode_cookie_value(value: object) -> str:
@@ -221,8 +220,12 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             try:
                 account_label = datastore.get_account_info(account_id)
             except Exception:
-                account_label = decode_cookie_value(
-                    request.cookies.get("soundcork_account_label"), "Unknown Account"
+                account_label = (
+                    decode_cookie_value(
+                        request.cookies.get("soundcork_account_label"),
+                        "Unknown Account",
+                    )
+                    or "Unknown Account"
                 )
 
             # Verify account still exists
@@ -237,6 +240,8 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             presets: list["Preset"] = []
 
             for device_id in datastore.list_devices(account_id):
+                if device_id is None:
+                    continue
                 try:
                     device_info = datastore.get_device_info(account_id, device_id)
                     cd = combined_devices.get(device_id)
@@ -329,11 +334,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 is_playing_bool,
                 now_playing.get("source") if now_playing else None,
             )
-            auto_refresh = (
-                DASHBOARD_AUTO_REFRESH_SECONDS if pending_action else None
-            )
-
-            response = templates.TemplateResponse(
+            template_response = templates.TemplateResponse(
                 request=request,
                 name="dashboard.html",
                 context={
@@ -349,13 +350,12 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "now_playing": now_playing,
                     "resume_content_id": resume_content_id,
                     "pending_action": pending_action,
-                    "auto_refresh": auto_refresh,
                     "error": None,
                 },
             )
             if pending_resolved:
-                response.delete_cookie("soundcork_pending_action")
-            return response
+                template_response.delete_cookie("soundcork_pending_action")
+            return template_response
 
         except Exception as e:
             logger.error(f"Error rendering dashboard: {e}")
@@ -381,7 +381,6 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                     "now_playing": None,
                     "resume_content_id": None,
                     "pending_action": None,
-                    "auto_refresh": None,
                     "error": "Error loading dashboard data",
                 },
             )
@@ -463,9 +462,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             if source == "AUX" and not source_account:
                 source_account = "AUX"
 
-            success = speakers.select_source(
-                selected_device_id, source, source_account
-            )
+            success = speakers.select_source(selected_device_id, source, source_account)
 
             response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
             if success:
@@ -701,21 +698,15 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 "content_name": (
                     now_playing.get("content_name") if now_playing else None
                 ),
-                "artist": (
-                    now_playing.get("artist") if now_playing else None
-                ),
+                "artist": (now_playing.get("artist") if now_playing else None),
                 "is_local_source": bool(
                     now_playing and now_playing.get("is_local_source")
                 ),
-                "supports_skip": bool(
-                    now_playing and now_playing.get("supports_skip")
-                ),
+                "supports_skip": bool(now_playing and now_playing.get("supports_skip")),
                 "supports_local_resume": bool(
                     now_playing and now_playing.get("supports_local_resume")
                 ),
-                "source": (
-                    now_playing.get("source") if now_playing else None
-                ),
+                "source": (now_playing.get("source") if now_playing else None),
                 "source_label": (
                     now_playing.get("source_label") if now_playing else None
                 ),
@@ -737,7 +728,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         response.delete_cookie("soundcork_selected_content_item_id")
         response.delete_cookie("soundcork_selected_device")
         response.delete_cookie("soundcork_selected_device_id")
-        response.delete_cookie("soundcork_is_playing")
+        response.delete_cookie("soundcork_pending_action")
         logger.info("User logged out")
         return response
 
@@ -753,8 +744,12 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             try:
                 account_label = datastore.get_account_info(account_id)
             except Exception:
-                account_label = decode_cookie_value(
-                    request.cookies.get("soundcork_account_label"), "Unknown Account"
+                account_label = (
+                    decode_cookie_value(
+                        request.cookies.get("soundcork_account_label"),
+                        "Unknown Account",
+                    )
+                    or "Unknown Account"
                 )
 
             if not datastore.account_exists(account_id):
@@ -811,22 +806,31 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 return RedirectResponse(url="/miniapp/login", status_code=303)
 
             form_data = await request.form()
-            slot = form_data.get("slot", "").strip()
-            name = form_data.get("name", "").strip()
-            source = form_data.get("source", "").strip()
-            location = form_data.get("location", "").strip()
-            container_art = form_data.get("container_art", "").strip() or ""
+            slot = str(form_data.get("slot", "")).strip()
+            name = str(form_data.get("name", "")).strip()
+            source = str(form_data.get("source", "")).strip()
+            location = str(form_data.get("location", "")).strip()
+            container_art = str(form_data.get("container_art", "")).strip()
 
             # Validate inputs
             if not slot or not name or not source or not location:
-                return RedirectResponse(url="/miniapp/presets?error=All fields required", status_code=303)
+                return RedirectResponse(
+                    url="/miniapp/presets?error=All fields required",
+                    status_code=303,
+                )
 
             try:
                 slot_num = int(slot)
                 if slot_num < 1 or slot_num > 6:
-                    return RedirectResponse(url="/miniapp/presets?error=Slot must be 1-6", status_code=303)
+                    return RedirectResponse(
+                        url="/miniapp/presets?error=Slot must be 1-6",
+                        status_code=303,
+                    )
             except ValueError:
-                return RedirectResponse(url="/miniapp/presets?error=Slot must be a number", status_code=303)
+                return RedirectResponse(
+                    url="/miniapp/presets?error=Slot must be a number",
+                    status_code=303,
+                )
 
             # Load current presets
             presets = datastore.get_presets(account_id)
@@ -835,7 +839,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             presets = [p for p in presets if p.id != slot]
 
             # Create new preset with required fields
-            now_str = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', '.000+00:00')
+            now_str = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
             new_preset = PresetModel(
                 id=slot,
                 name=name,
@@ -858,7 +862,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
 
         except Exception as e:
             logger.error(f"Error saving preset: {e}")
-            return RedirectResponse(url="/miniapp/presets?error=Failed to save preset", status_code=303)
+            return RedirectResponse(
+                url="/miniapp/presets?error=Failed to save preset",
+                status_code=303,
+            )
 
     @router.post("/miniapp/presets/delete")
     async def delete_preset(request: Request):
@@ -869,7 +876,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 return RedirectResponse(url="/miniapp/login", status_code=303)
 
             form_data = await request.form()
-            preset_id = form_data.get("preset_id", "").strip()
+            preset_id = str(form_data.get("preset_id", "")).strip()
 
             if not preset_id:
                 return RedirectResponse(url="/miniapp/presets", status_code=303)
@@ -885,6 +892,8 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
 
         except Exception as e:
             logger.error(f"Error deleting preset: {e}")
-            return RedirectResponse(url="/miniapp/presets?error=Failed to delete preset", status_code=303)
+            return RedirectResponse(
+                url="/miniapp/presets?error=Failed to delete preset", status_code=303
+            )
 
     return router

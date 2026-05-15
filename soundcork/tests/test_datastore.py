@@ -606,6 +606,28 @@ def test_etag_for_account_correctly_finds_max(datastore: DataStore, monkeypatch)
     assert datastore.etag_for_account("12345") == 3000
 
 
+def test_list_accounts_empty_dir_returns_empty(datastore: DataStore, tmp_path):
+    datastore.data_dir = str(tmp_path)
+
+    assert datastore.list_accounts() == []
+
+
+def test_list_devices_empty_account_dir_returns_empty(datastore: DataStore, tmp_path):
+    datastore.data_dir = str(tmp_path)
+    account_dir = tmp_path / "12345"
+    account_dir.mkdir()
+
+    assert datastore.list_devices("12345") == []
+
+
+def test_list_poweron_devices_empty_dir_returns_empty(datastore: DataStore, tmp_path):
+    datastore.data_dir = str(tmp_path)
+    poweron_dir = tmp_path / DEVICES_DIR
+    poweron_dir.mkdir()
+
+    assert datastore.list_poweron_devices() == []
+
+
 def test_find_device_prefers_account_then_falls_back_poweron(
     datastore: DataStore,
     sample_device: DeviceInfo,
@@ -639,7 +661,7 @@ def test_find_device_prefers_account_then_falls_back_poweron(
     assert poweron_account is None
 
 
-def find_device_returns_none_when_no_account_or_poweron(
+def test_find_device_returns_none_when_no_account_or_poweron(
     datastore: DataStore, monkeypatch
 ):
     monkeypatch.setattr(datastore, "list_accounts", lambda: ["12345"])

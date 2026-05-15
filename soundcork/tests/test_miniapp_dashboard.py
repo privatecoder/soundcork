@@ -1,40 +1,9 @@
-import sys
-import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-from fastapi import FastAPI
-from fastapi import Response
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
-
-
-pydantic_settings = types.ModuleType("pydantic_settings")
-
-
-class BaseSettings:
-    pass
-
-
-def SettingsConfigDict(**kwargs):
-    return kwargs
-
-
-pydantic_settings.BaseSettings = BaseSettings
-pydantic_settings.SettingsConfigDict = SettingsConfigDict
-soundtouchclient = types.ModuleType("bosesoundtouchapi.soundtouchclient")
-soundtouchclient.ContentItem = object
-soundtouchclient.SoundTouchClient = object
-soundtouchclient.SoundTouchDevice = object
-soundtouchdiscovery = types.ModuleType("bosesoundtouchapi.soundtouchdiscovery")
-soundtouchdiscovery.SoundTouchDiscovery = object
-package = types.ModuleType("bosesoundtouchapi")
-package.soundtouchclient = soundtouchclient
-package.soundtouchdiscovery = soundtouchdiscovery
-sys.modules["pydantic_settings"] = pydantic_settings
-sys.modules["bosesoundtouchapi"] = package
-sys.modules["bosesoundtouchapi.soundtouchclient"] = soundtouchclient
-sys.modules["bosesoundtouchapi.soundtouchdiscovery"] = soundtouchdiscovery
 
 from soundcork.miniapp import get_miniapp_router
 from soundcork.model import Preset
@@ -100,10 +69,17 @@ class FakeSpeakers:
             ),
         }
 
+    def get_volume(self, device_id: str):
+        return None
+
+    def get_now_playing(self, device_id: str):
+        return None
+
 
 class FakeTemplates:
     def __init__(self, directory: str) -> None:
         self.directory = directory
+        self.env = SimpleNamespace(globals={})
 
     def TemplateResponse(self, *args, **kwargs) -> Response:
         context = kwargs["context"]
@@ -124,8 +100,7 @@ def test_dashboard_ignores_discovered_only_devices_not_in_datastore(monkeypatch)
         "/miniapp/dashboard",
         headers={
             "Cookie": (
-                f"soundcork_account_id={ACCOUNT_ID}; "
-                "soundcork_account_label=Bedroom"
+                f"soundcork_account_id={ACCOUNT_ID}; " "soundcork_account_label=Bedroom"
             )
         },
     )

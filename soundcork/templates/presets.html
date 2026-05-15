@@ -96,6 +96,9 @@
                     </h2>
 
                     <form action="/miniapp/presets/save" method="post" class="preset-form">
+                        {% if edit_preset %}
+                        <input type="hidden" name="slot" value="{{ edit_preset.id }}">
+                        {% endif %}
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="slot">Preset Slot</label>

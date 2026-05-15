@@ -3,9 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    {% if auto_refresh %}
-    <meta http-equiv="refresh" content="{{ auto_refresh }}; url=/miniapp/dashboard">
-    {% endif %}
     <title>Soundcork Dashboard</title>
     <link rel="stylesheet" href="/static/css/main.css">
 </head>
@@ -24,6 +21,8 @@
                             <span class="loading-dot" aria-hidden="true"></span>Starting…
                         {% elif pending_action == 'stop' %}
                             <span class="loading-dot" aria-hidden="true"></span>Stopping…
+                        {% elif pending_action == 'source' %}
+                            <span class="loading-dot" aria-hidden="true"></span>Switching…
                         {% elif is_playing == 'true' %}
                             Now Playing
                         {% else %}
@@ -388,7 +387,7 @@
         const STATUS_POLL_MS = 3000;
         let lastIsPlaying = {{ 'true' if is_playing == 'true' else 'false' }};
         let lastHasResume = {{ 'true' if resume_content_id else 'false' }};
-        let lastPendingAction = {{ "'play'" if pending_action == 'play' else ("'stop'" if pending_action == 'stop' else 'null') }};
+        let lastPendingAction = {{ "'play'" if pending_action == 'play' else ("'stop'" if pending_action == 'stop' else ("'source'" if pending_action == 'source' else 'null')) }};
 
         function applyStatus(s) {
             if (!s || !s.selected) return;

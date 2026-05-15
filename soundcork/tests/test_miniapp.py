@@ -69,6 +69,12 @@ class FakeSpeakers:
         self.play_calls.append((device_id, content_item_id))
         return self.play_result
 
+    def get_volume(self, device_id: str):
+        return None
+
+    def get_now_playing(self, device_id: str):
+        return None
+
 
 def make_client(monkeypatch, speakers: FakeSpeakers | None = None):
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
@@ -97,6 +103,18 @@ def test_select_device_percent_encodes_unicode_cookie(monkeypatch):
     assert response.status_code == 303
     assert "soundcork_selected_device=lo%C5%BEnice" in cookies
     assert "ložnice" not in cookies
+
+
+def test_logout_clears_session_and_pending_cookies(monkeypatch):
+    client, _speakers = make_client(monkeypatch)
+
+    response = client.post("/miniapp/logout", follow_redirects=False)
+
+    cookies = "\n".join(set_cookie_headers(response))
+    assert response.status_code == 303
+    assert "soundcork_account_id=" in cookies
+    assert "soundcork_selected_content_item_id=" in cookies
+    assert "soundcork_pending_action=" in cookies
 
 
 def test_dashboard_decodes_display_cookies(monkeypatch):
@@ -135,7 +153,7 @@ def test_select_content_item_plays_when_device_is_selected(monkeypatch):
     assert response.status_code == 303
     assert speakers.play_calls == [(DEVICE_ID, "4")]
     assert "soundcork_selected_content_item_name=R%C3%A1dio%20Proglas" in cookies
-    assert "soundcork_is_playing=true" in cookies
+    assert "soundcork_pending_action=play:" in cookies
 
 
 def test_select_content_item_without_device_only_selects(monkeypatch):
@@ -151,7 +169,7 @@ def test_select_content_item_without_device_only_selects(monkeypatch):
     assert response.status_code == 303
     assert speakers.play_calls == []
     assert "soundcork_selected_content_item_name=R%C3%A1dio%20Proglas" in cookies
-    assert "soundcork_is_playing" not in cookies
+    assert "soundcork_pending_action" not in cookies
 
 
 def test_select_content_item_records_failed_playback(monkeypatch):
@@ -167,4 +185,4 @@ def test_select_content_item_records_failed_playback(monkeypatch):
     cookies = "\n".join(set_cookie_headers(response))
     assert response.status_code == 303
     assert speakers.play_calls == [(DEVICE_ID, "4")]
-    assert "soundcork_is_playing=false" in cookies
+    assert "soundcork_pending_action" not in cookies

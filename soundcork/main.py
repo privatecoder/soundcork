@@ -81,6 +81,21 @@ datastore = DataStore()
 settings = Settings()
 speakers = Speakers(datastore, settings)
 
+
+def _bmx_service_by_name(service_name: str) -> Service:
+    """Return a BMX service by protocol name instead of array position."""
+    bmx_json = bmx_services_json(settings)
+    bmx_json_obj = json.loads(bmx_json)
+    for service in bmx_json_obj["bmx_services"]:
+        if service.get("id", {}).get("name") == service_name:
+            return Service.model_validate(service)
+
+    raise HTTPException(
+        status_code=HTTPStatus.NOT_FOUND,
+        detail=f"BMX service {service_name} not found",
+    )
+
+
 from soundcork.spotify_service import SpotifyService
 
 spotify_service = SpotifyService()
@@ -578,8 +593,8 @@ async def post_account_login(
             if account_pattern.match(username):
                 account_id = username
             else:
-                raise Exception
-    except Exception:
+                raise ValueError("login username is not an account id")
+    except (ET.ParseError, ValueError):
         exception_xml = """<status>
         <message>Account Login failure.</message>
         <status-code>4024</status-code>
@@ -685,10 +700,7 @@ def bmx_services() -> BmxResponse:
     tags=["bmx"],
 )
 def bmx_tunein() -> Service:
-    bmx_json = bmx_services_json(settings)
-    bmx_json_obj = json.loads(bmx_json)
-    # this is hardcoded so we know where it is in the array
-    return bmx_json_obj["bmx_services"][0]
+    return _bmx_service_by_name("TUNEIN")
 
 
 @app.get(
@@ -751,8 +763,7 @@ def bmx_tunein_navigate_profile(
     profile_type: str | None = None,
     program_id: str | None = None,
 ) -> BmxNavResponse:
-    # the profile_type and program_id i think can be ignored in favor of the encoded_uri?
-    return tunein_navigate_profile_v1(encoded_uri)
+    return tunein_navigate_profile_v1(encoded_uri, profile_type, program_id)
 
 
 @app.get(
@@ -770,10 +781,9 @@ def bmx_tunein_search_v1(request: Request) -> BmxNavResponse:
     tags=["bmx"],
 )
 def bmx_local_internet_radio() -> Service:
-    bmx_json = bmx_services_json(settings)
-    bmx_json_obj = json.loads(bmx_json)
-    # this is hardcoded so we know where it is in the array
-    return bmx_json_obj["bmx_services"][1]
+    return _bmx_service_by_name("LOCAL_INTERNET_RADIO")
+
+
 @app.post(
     "/bmx/tunein/v1/report",
     status_code=HTTPStatus.OK,
@@ -807,10 +817,7 @@ def bmx_media_file(filename: str) -> FileResponse:
     tags=["bmx"],
 )
 def bmx_siriusxm() -> Service:
-    bmx_json = bmx_services_json(settings)
-    bmx_json_obj = json.loads(bmx_json)
-    # this is hardcoded so we know where it is in the array
-    return bmx_json_obj["bmx_services"][2]
+    return _bmx_service_by_name("SIRIUSXM_EVEREST")
 
 
 @app.get("/updates/soundtouch", tags=["swupdate"])

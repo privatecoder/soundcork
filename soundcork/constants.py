@@ -78,7 +78,7 @@ GROUP_RE = "^\\d{7}$"
 
 
 # used for when a timestamp is missing
-DEFAULT_DATESTR = "2012-09-19T12:43:00.000+00:00"
+DEFAULT_DATESTR = "1970-01-01T00:00:00.000+00:00"
 
 # used when an account label is missing
 DEFAULT_ACCOUNT_LABEL = "Unnamed account"

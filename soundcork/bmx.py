@@ -85,14 +85,9 @@ def tunein_playback(station_id: str) -> BmxPlaybackResponse:
 
     root = ET.fromstring(content_str)
 
-    try:
-        body = root.find("body")
-        outline = body.find("outline")  # type: ignore
-        station_elem = outline.find("station")  # type: ignore
-    except Exception as e:
-        # TODO narrow this exception
-        outline = None
-        station_elem = None
+    body = root.find("body")
+    outline = body.find("outline") if body is not None else None
+    station_elem = outline.find("station") if outline is not None else None
 
     name = strip_element_text(station_elem.find("name")) if station_elem else ""
     logo = strip_element_text(station_elem.find("logo")) if station_elem else ""
@@ -193,14 +188,9 @@ def tunein_playback_podcast(podcast_id: str) -> BmxPlaybackResponse:
 
     root = ET.fromstring(content_str)
 
-    try:
-        body = root.find("body")
-        outline = body.find("outline")  # type: ignore
-        topic = outline.find("topic")  # type: ignore
-    except Exception as e:
-        # TODO narrow this exception
-        outline = None
-        topic = None
+    body = root.find("body")
+    outline = body.find("outline") if body is not None else None
+    topic = outline.find("topic") if outline is not None else None
     title = strip_element_text(topic.find("title")) if topic else ""
     show_title = strip_element_text(topic.find("show_title")) if topic else ""
     duration = strip_element_text(topic.find("duration")) if topic else ""
@@ -488,7 +478,11 @@ def tunein_sections_jsonapi(
     return sections
 
 
-def tunein_navigate_profile_v1(encoded_uri: str = "") -> BmxNavResponse:
+def tunein_navigate_profile_v1(
+    encoded_uri: str = "",
+    profile_type: str | None = None,
+    program_id: str | None = None,
+) -> BmxNavResponse:
     tunein_uri = base64.urlsafe_b64decode(encoded_uri).decode()
     logger.debug(f"profile_nav tunein_uri={tunein_uri}")
     profile_resp = urllib.request.urlopen(tunein_uri).read()
@@ -539,9 +533,12 @@ def tunein_navigate_profile_v1(encoded_uri: str = "") -> BmxNavResponse:
         else:
             logger.info(f"top-level search not a container: {item.type}")
 
-    links = {
-        "self": {"href": f"/v1/navigate/FIXME{encoded_uri}"},
-    }
+    if profile_type and program_id:
+        self_href = f"/v1/navigate/profiles/{profile_type}/{program_id}/{encoded_uri}"
+    else:
+        self_href = f"/v1/navigate/{encoded_uri}"
+
+    links = {"self": {"href": self_href}}
     return BmxNavResponse(
         links=links,
         bmx_sections=sections,

@@ -1,23 +1,5 @@
 import json
-import sys
-import types
 from pathlib import Path
-
-
-pydantic_settings = types.ModuleType("pydantic_settings")
-
-
-class BaseSettings:
-    pass
-
-
-def SettingsConfigDict(**kwargs):
-    return kwargs
-
-
-pydantic_settings.BaseSettings = BaseSettings
-pydantic_settings.SettingsConfigDict = SettingsConfigDict
-sys.modules["pydantic_settings"] = pydantic_settings
 
 from soundcork.datastore import ACCOUNTS_FILE, DataStore
 

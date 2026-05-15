@@ -26,14 +26,14 @@ After changing `BASE_URL`, you must **re-run "Switch to Soundcork"** in the admi
 
 ```bash
 docker run -d --name soundcork \
-  -p 8000:8000 \
+  --network host \
   -v /path/to/your/data:/soundcork/data \
   -e BASE_URL=http://192.168.1.50:8000 \
   -e DATA_DIR=/soundcork/data \
   ghcr.io/deborahgu/soundcork:main
 ```
 
-> Replace `192.168.1.50` with your host's LAN IP — the address your speakers can reach.
+> Replace `192.168.1.50` with your host's LAN IP — the address your speakers can reach. Host networking is recommended because UPnP discovery and SoundTouch callbacks need LAN visibility.
 
 ## Option 2: Docker Compose
 
@@ -43,8 +43,7 @@ Create a `docker-compose.yml`:
 services:
   soundcork:
     image: ghcr.io/deborahgu/soundcork:main
-    ports:
-      - "8000:8000"
+    network_mode: host
     environment:
       # Must be reachable from your speakers - use your host's LAN IP, not localhost
       - BASE_URL=http://192.168.1.50:8000

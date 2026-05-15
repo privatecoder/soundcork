@@ -2,6 +2,7 @@ import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from http import HTTPStatus
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
@@ -31,6 +32,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 settings = Settings()
+_recents_lock = Lock()
+
+
+def _timestamp_or_default(value: str | None) -> str:
+    try:
+        return datetime.fromtimestamp(int(value or ""), timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_DATESTR
 
 
 def source_providers() -> list[SourceProvider]:
@@ -46,15 +55,8 @@ def preset_xml(preset: Preset, conf_sources_list: list[ConfiguredSource]) -> ET.
     preset_element = ET.Element("preset")
     preset_element.attrib["buttonNumber"] = preset.id
 
-    try:
-        created_on = datetime.fromtimestamp(int(preset.created_on), timezone.utc).isoformat()  # type: ignore
-    except:
-        created_on = DEFAULT_DATESTR
-
-    try:
-        updated_on = datetime.fromtimestamp(int(preset.updated_on), timezone.utc).isoformat()  # type: ignore
-    except:
-        updated_on = DEFAULT_DATESTR
+    created_on = _timestamp_or_default(preset.created_on)
+    updated_on = _timestamp_or_default(preset.updated_on)
 
     ET.SubElement(preset_element, "containerArt").text = preset.container_art
     ET.SubElement(preset_element, "contentItemType").text = preset.type
@@ -250,10 +252,7 @@ def recents_xml(datastore: "DataStore", account: str, device: str) -> ET.Element
             int(recent.utc_time), timezone.utc
         ).isoformat()
 
-        try:
-            created_on = datetime.fromtimestamp(int(recent.created_on), timezone.utc).isoformat()  # type: ignore
-        except:
-            created_on = DEFAULT_DATESTR
+        created_on = _timestamp_or_default(recent.created_on)
 
         recent_element = ET.SubElement(recents_element, "recent")
         recent_element.attrib["id"] = recent.id
@@ -271,9 +270,6 @@ def recents_xml(datastore: "DataStore", account: str, device: str) -> ET.Element
 def add_recent(
     datastore: "DataStore", account: str, device: str, source_xml: bytes
 ) -> ET.Element:
-    conf_sources_list = datastore.get_configured_sources(account, device)
-    recents_list = datastore.get_recents(account, device)
-
     new_recent_elem = ET.fromstring(source_xml)
 
     # load the recent to add
@@ -294,56 +290,53 @@ def add_recent(
 
     type = strip_element_text(new_recent_elem.find("contentItemType"))
 
-    try:
-        matching_src = next(src for src in conf_sources_list if src.id == source_id)
-    except StopIteration:
-        raise HTTPException(status_code=400, detail=f"Invalid source {source_id}")
-    source = matching_src.source_key_type
-    source_account = matching_src.source_key_account
+    with _recents_lock:
+        conf_sources_list = datastore.get_configured_sources(account, device)
+        recents_list = datastore.get_recents(account, device)
 
-    # see if this item is already in the recents list
-    matching_recent = next(
-        (
-            i
-            for i in recents_list
-            if i.source == source
-            and i.location == location
-            and i.source_account == source_account
-        ),
-        None,
-    )
-    recent_obj = None
-    if matching_recent:
-        # just update the time and move it to the front of the list
-        matching_recent.utc_time = str(utc_time)
-        created_on = DEFAULT_DATESTR
-        recent_obj = matching_recent
-    else:
-        # need a new id
-        # TODO handle race conditions -- right now two recent requests
-        # would probably have the second clobber the first
-        next_id = max(int(recent.id) for recent in recents_list) + 1
-        recent_obj = Recent(
-            name=name,  # type: ignore
-            utc_time=str(utc_time),
-            id=str(next_id),
-            source_id=source_id,
-            source=source,
-            device_id=device_id,
-            type=type,  # type: ignore
-            location=location,  # type: ignore
-            source_account=source_account,
-            is_presetable=is_presetable,
+        try:
+            matching_src = next(src for src in conf_sources_list if src.id == source_id)
+        except StopIteration:
+            raise HTTPException(status_code=400, detail=f"Invalid source {source_id}")
+        source = matching_src.source_key_type
+        source_account = matching_src.source_key_account
+
+        matching_recent = next(
+            (
+                i
+                for i in recents_list
+                if i.source == source
+                and i.location == location
+                and i.source_account == source_account
+            ),
+            None,
         )
-        created_on = datetime.fromtimestamp(
-            datetime.now().timestamp(), timezone.utc
-        ).isoformat()
+        if matching_recent:
+            matching_recent.utc_time = str(utc_time)
+            created_on = DEFAULT_DATESTR
+            recent_obj = matching_recent
+        else:
+            next_id = max((int(recent.id) for recent in recents_list), default=0) + 1
+            recent_obj = Recent(
+                name=name,  # type: ignore
+                utc_time=str(utc_time),
+                id=str(next_id),
+                source_id=source_id,
+                source=source,
+                device_id=device_id,
+                type=type,  # type: ignore
+                location=location,  # type: ignore
+                source_account=source_account,
+                is_presetable=is_presetable,
+            )
+            created_on = datetime.fromtimestamp(
+                datetime.now().timestamp(), timezone.utc
+            ).isoformat()
 
-        recents_list.insert(0, recent_obj)
-        # probably shouldn't just let this grow unbounded
-        recents_list = recents_list[:10]
+            recents_list.insert(0, recent_obj)
+            recents_list = recents_list[:10]
 
-    datastore.save_recents(account, device, recents_list)
+        datastore.save_recents(account, device, recents_list)
 
     lastplayed = datetime.fromtimestamp(
         int(recent_obj.utc_time), timezone.utc

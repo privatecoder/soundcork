@@ -7,7 +7,9 @@
         <meta name="viewport"
           content="width=device-width,
                    initial-scale=1.0">
+        {% if not timed_out %}
         <meta http-equiv="refresh" content="10; url=/admin/wait/{{device_id}}/{{elapsed + 10}}">
+        {% endif %}
     </head>
     <body>
         <div class="left-sidebar-grid">
@@ -15,7 +17,15 @@
                 Soundcork:  Can't Brick Us
             </header>
     <main class="main-content">
+        {% if timed_out %}
+        <div class="alert alert-warning" role="alert">
+            <p>Stopped waiting for device {{ device_id }} after 120 seconds.</p>
+            <p>The speaker may still be rebooting, unreachable, or not discoverable from this host.</p>
+            <p><a href="/admin/">Return to admin</a> and refresh discovery.</p>
+        </div>
+        {% else %}
         waiting {{elapsed}} of 120 seconds for device to restart...
+        {% endif %}
     </main>
     <section class="left-sidebar">
         <img src="/static/images/soundcork.png" alt="Soundcork logo">

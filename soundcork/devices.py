@@ -12,13 +12,12 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from io import BytesIO
 from os import unlink
-from subprocess import run
 from typing import Optional
 from urllib.parse import urlparse
 
 import paramiko
 import upnpclient  # type: ignore
-from scp import SCPClient  # type: ignore
+from scp import SCPClient, SCPException  # type: ignore
 
 from soundcork.config import Settings
 from soundcork.constants import (
@@ -37,9 +36,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SSH_TIMEOUT_SECONDS = 10
+HTTP_TIMEOUT_SECONDS = 10
 
-datastore = DataStore()
-settings = Settings()
+
+def _settings() -> Settings:
+    return Settings()
+
+
+def _datastore() -> DataStore:
+    return DataStore()
 
 
 def hostname_for_device(device: upnpclient.upnp.Device) -> str:
@@ -80,7 +86,7 @@ def override_speaker_config(host: str) -> bool:
     bytesio = BytesIO()
     with open("resources/OverrideSdkPrivateCfg.xml.template", "r") as file:
         override_xml = file.read()
-        override_xml = override_xml.replace("{SC_BASE_URL}", f"{settings.base_url}")
+        override_xml = override_xml.replace("{SC_BASE_URL}", f"{_settings().base_url}")
         bytesio.write(override_xml.encode())
         bytesio.seek(0)
     return write_file_to_speaker(bytesio, host, SPEAKER_OVERRIDE_SDK_LOCATION)
@@ -88,19 +94,28 @@ def override_speaker_config(host: str) -> bool:
 
 def write_file_to_speaker(payload: BytesIO, host: str, remote_path: str) -> bool:
 
-    # TODO add timeout handling
     logger.debug(f"copying {remote_path} to {host}")
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        ssh.connect(hostname=host, port=22, username="root", password="")
+        ssh.connect(
+            hostname=host,
+            port=22,
+            username="root",
+            password="",
+            timeout=SSH_TIMEOUT_SECONDS,
+            banner_timeout=SSH_TIMEOUT_SECONDS,
+            auth_timeout=SSH_TIMEOUT_SECONDS,
+        )
 
         with SCPClient(ssh.get_transport()) as scp:
             scp.putfo(payload, remote_path)
-    except Exception as e:
+    except (OSError, paramiko.SSHException, SCPException) as e:
         logger.info(f"Error: {e}")
         return False
+    finally:
+        ssh.close()
     return True
 
 
@@ -108,14 +123,23 @@ def reboot_speaker(host: str) -> bool:
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        ssh.connect(hostname=host, port=22, username="root", password="")
+        ssh.connect(
+            hostname=host,
+            port=22,
+            username="root",
+            password="",
+            timeout=SSH_TIMEOUT_SECONDS,
+            banner_timeout=SSH_TIMEOUT_SECONDS,
+            auth_timeout=SSH_TIMEOUT_SECONDS,
+        )
         ssh.exec_command("reboot")
-        ssh.close()
         logger.debug(f"sent reboot to {host}")
         return True
-    except:
-        logger.info(f"error rebooting {host}")
+    except (OSError, paramiko.SSHException) as e:
+        logger.info(f"error rebooting {host}: {e}")
         return False
+    finally:
+        ssh.close()
 
 
 def read_file_from_speaker_ssh(host: str, remote_path: str, local_path: str) -> None:
@@ -123,12 +147,22 @@ def read_file_from_speaker_ssh(host: str, remote_path: str, local_path: str) -> 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        ssh.connect(hostname=host, port=22, username="root", password="")
+        ssh.connect(
+            hostname=host,
+            port=22,
+            username="root",
+            password="",
+            timeout=SSH_TIMEOUT_SECONDS,
+            banner_timeout=SSH_TIMEOUT_SECONDS,
+            auth_timeout=SSH_TIMEOUT_SECONDS,
+        )
 
         with SCPClient(ssh.get_transport()) as scp:
             scp.get(remote_path, local_path)
-    except Exception as e:
+    except (OSError, paramiko.SSHException, SCPException) as e:
         logger.info(f"Error: {e}")
+    finally:
+        ssh.close()
 
 
 def read_file_from_speaker_http(host: str, path: str) -> str:
@@ -136,8 +170,10 @@ def read_file_from_speaker_http(host: str, path: str) -> str:
     url = f"http://{host}:{SPEAKER_HTTP_PORT}{path}"
     logger.info(f"checking {url}")
     try:
-        return str(urllib.request.urlopen(url).read(), "utf-8")
-    except Exception:
+        return str(
+            urllib.request.urlopen(url, timeout=HTTP_TIMEOUT_SECONDS).read(), "utf-8"
+        )
+    except (OSError, TimeoutError, urllib.error.URLError):
         logger.info(f"no result for {url}")
         return ""
 
@@ -147,9 +183,8 @@ def get_bose_devices() -> list[upnpclient.upnp.Device]:
     devices = upnpclient.discover()
     bose_devices = [d for d in devices if "Bose SoundTouch" in d.model_description]
     logger.info("Discovering upnp devices on the network")
-    logger.info(
-        f'Discovered Bose devices:\n- {"\n- ".join([b.friendly_name for b in bose_devices])}'
-    )
+    discovered_names = "\n- ".join([b.friendly_name for b in bose_devices])
+    logger.info(f"Discovered Bose devices:\n- {discovered_names}")
     return bose_devices
 
 
@@ -162,8 +197,8 @@ def get_device_by_id(device_id: str) -> Optional[upnpclient.upnp.Device]:
                 info_elem = ET.fromstring(info_str)
                 if info_elem.attrib.get("deviceID", "") == device_id:
                     return device
-        except:
-            pass
+        except (AttributeError, ET.ParseError, ValueError) as e:
+            logger.debug(f"Could not match device {device_id} against {device}: {e}")
     return None
 
 
@@ -185,7 +220,9 @@ def show_upnp_devices() -> None:
 def is_reachable(device: upnpclient.upnp.Device) -> bool:
     """Returns true if device is reachable via telnet, ssh, etc."""
     device_address = urlparse(device.location).hostname
-    return is_reachable(device_address)
+    if not device_address:
+        return False
+    return addr_is_reachable(device_address)
 
 
 def addr_is_reachable(device_address: str) -> bool:
@@ -194,7 +231,7 @@ def addr_is_reachable(device_address: str) -> bool:
     try:
         s.connect((device_address, 22))
         return True
-    except Exception:
+    except OSError:
         return False
     finally:
         s.close()
@@ -206,6 +243,7 @@ def add_device(device: upnpclient.upnp.Device) -> bool:
 
 
 def add_device_by_ip(hostname: str) -> bool:
+    datastore = _datastore()
     info_elem = ET.fromstring(read_device_info(hostname))
     device_id = info_elem.attrib.get("deviceID", "")
     # If margeAccountUUID is not present, the .text will correctly raise an error here
@@ -217,7 +255,7 @@ def add_device_by_ip(hostname: str) -> bool:
             sources = read_sources(hostname)
             # FIXME get the account email address for this
             account_name = None
-            add_account(account_id, recents, presets, sources, account_name)
+            add_account(account_id, recents, presets, sources, account_name, datastore)
 
         datastore.add_device(
             account_id,
@@ -236,7 +274,9 @@ def add_account(
     presets: str,
     sources: str,
     account_name: str | None = None,
+    datastore: DataStore | None = None,
 ) -> bool:
+    datastore = datastore or _datastore()
     if not datastore.create_account(account_id, label=account_name):
         return False
     datastore.save_presets_xml(account_id, presets)

@@ -7,7 +7,7 @@ from bosesoundtouchapi.soundtouchclient import (  # type: ignore
     SoundTouchDevice,
 )
 from bosesoundtouchapi.soundtouchdiscovery import SoundTouchDiscovery  # type: ignore
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from soundcork.config import Settings
 from soundcork.datastore import DataStore
@@ -72,7 +72,7 @@ DISCOVERY_CACHE_TTL_SECONDS = 30
 # Short post-action poll so snappy devices show their new state on the
 # first dashboard render after the redirect. Slow devices (TuneIn streams
 # can take 10-20s to buffer) are handled separately via a pending-action
-# cookie + meta refresh on the dashboard, so we keep this very short — the
+# cookie + client-side dashboard polling, so we keep this very short — the
 # important UX is that the user gets a redirect quickly with visible
 # button feedback, not that we wait for the device to fully confirm.
 STATE_POLL_MAX_ATTEMPTS = 3
@@ -108,8 +108,7 @@ class CombinedDevice(BaseModel):
     reachable: bool
     st_device: SoundTouchDevice | None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class Speakers:
@@ -331,9 +330,7 @@ class Speakers:
             )
             return True
         except Exception as e:
-            logger.error(
-                f"Error switching device {device_id} to source {source}: {e}"
-            )
+            logger.error(f"Error switching device {device_id} to source {source}: {e}")
             return False
 
     def get_now_playing(self, device_id: str) -> dict | None:
@@ -357,7 +354,10 @@ class Speakers:
             track = (getattr(np, "Track", "") or "").strip() or None
             artist = (getattr(np, "Artist", "") or "").strip() or None
             is_playing = play_state in {
-                "PLAY_STATE", "BUFFERING_STATE", "PLAY", "BUFFERING"
+                "PLAY_STATE",
+                "BUFFERING_STATE",
+                "PLAY",
+                "BUFFERING",
             }
             source_label = LOCAL_SOURCE_LABELS.get(source) if is_local else None
             artist_out = None

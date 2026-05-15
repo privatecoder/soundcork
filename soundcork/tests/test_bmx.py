@@ -2,7 +2,11 @@ import base64
 import json
 import urllib.parse
 
-from soundcork.bmx import tunein_navigate_v1, tunein_search_v1
+from soundcork.bmx import (
+    tunein_navigate_profile_v1,
+    tunein_navigate_v1,
+    tunein_search_v1,
+)
 
 
 class FakeTuneInResponse:
@@ -102,4 +106,32 @@ def test_search_url_encodes_spaces_and_more_link_uses_encoded_query(monkeypatch)
     assert decoded_query["query"] == ["radio paradise"]
     assert response.bmx_sections[0].items[0].links.bmx_playback.href == (
         "/v1/playback/station/s12345"
+    )
+
+
+def test_profile_navigation_self_link_uses_profile_route(monkeypatch):
+    profile_uri = "http://opml.radiotime.com/Profile.ashx?id=p123"
+    contents_uri = "http://opml.radiotime.com/Contents.ashx?id=p123"
+
+    def fake_urlopen(url):
+        if url == profile_uri:
+            return FakeTuneInResponse(
+                {
+                    "Item": {
+                        "Title": "Show",
+                        "Image": "http://example.com/show.png",
+                        "Subtitle": "Episodes",
+                        "Pivots": {"Contents": {"Url": contents_uri}},
+                    }
+                }
+            )
+        return FakeTuneInResponse({"Items": []})
+
+    monkeypatch.setattr("soundcork.bmx.urllib.request.urlopen", fake_urlopen)
+    encoded_uri = encode_uri(profile_uri)
+
+    response = tunein_navigate_profile_v1(encoded_uri, "shows", "p123")
+
+    assert response.links.self.href == (
+        f"/v1/navigate/profiles/shows/p123/{encoded_uri}"
     )

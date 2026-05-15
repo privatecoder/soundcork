@@ -58,9 +58,7 @@ class DataStore:
                 makedirs(self.data_dir, exist_ok=True)
                 logger.info(f"Created data_dir at {path.abspath(self.data_dir)}")
             except OSError as e:
-                logger.error(
-                    f"Could not create data_dir {self.data_dir!r}: {e}"
-                )
+                logger.error(f"Could not create data_dir {self.data_dir!r}: {e}")
 
     def poweron_devices_dir(self) -> str:
         """returns the top-level directory that stores poweron info for all devices"""
@@ -183,7 +181,13 @@ class DataStore:
 
         info_tree = ET.ElementTree(info_elem)
         ET.indent(info_tree, space="    ", level=0)
-        info_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        try:
+            info_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        except OSError as e:
+            logger.error(f"Could not write device info {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write device info"
+            )
 
         return self.get_device_info(account, device.device_id)
 
@@ -210,16 +214,26 @@ class DataStore:
 
         presets_tree = ET.ElementTree(presets_elem)
         ET.indent(presets_tree, space="    ", level=0)
-        presets_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        try:
+            presets_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        except OSError as e:
+            logger.error(f"Could not write presets {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write presets"
+            )
         return presets_elem
 
-    # TODO: add error handling if you can't write the file
     def save_presets_xml(self, account: str, presets_xml: str):
         """Write Presets.xml for an Account"""
-        with open(
-            path.join(self.account_dir(account), PRESETS_FILE), "w"
-        ) as presets_file:
-            presets_file.write(presets_xml)
+        save_file = path.join(self.account_dir(account), PRESETS_FILE)
+        try:
+            with open(save_file, "w") as presets_file:
+                presets_file.write(presets_xml)
+        except OSError as e:
+            logger.error(f"Could not write presets XML {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write presets"
+            )
 
     def get_content_items(
         self, account: str, device_id: str
@@ -349,16 +363,26 @@ class DataStore:
 
         recents_tree = ET.ElementTree(recents_elem)
         ET.indent(recents_tree, space="    ", level=0)
-        recents_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        try:
+            recents_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        except OSError as e:
+            logger.error(f"Could not write recents {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write recents"
+            )
         return recents_elem
 
-    # TODO: add error handling if you can't write the file
     def save_recents_xml(self, account: str, recents_xml: str):
         """Write Recents.xml for an Account"""
-        with open(
-            path.join(self.account_dir(account), RECENTS_FILE), "w"
-        ) as recents_file:
-            recents_file.write(recents_xml)
+        save_file = path.join(self.account_dir(account), RECENTS_FILE)
+        try:
+            with open(save_file, "w") as recents_file:
+                recents_file.write(recents_xml)
+        except OSError as e:
+            logger.error(f"Could not write recents XML {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write recents"
+            )
 
     def get_configured_sources(
         self, account: str, device: str = ""
@@ -442,7 +466,13 @@ class DataStore:
             ET.SubElement(source_elem, "updatedOn").text = source.updated_on
         sources_tree = ET.ElementTree(sources_root)
         ET.indent(sources_tree, space="    ", level=0)
-        sources_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        try:
+            sources_tree.write(save_file, xml_declaration=True, encoding="UTF-8")
+        except OSError as e:
+            logger.error(f"Could not write sources {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write sources"
+            )
         return sources_root
 
     def remove_source(self, account: str, source_id: str) -> bool:
@@ -459,13 +489,17 @@ class DataStore:
             return True
         return False
 
-    # TODO: add error handling if you can't write the file
     def save_configured_sources_xml(self, account: str, sources_xml: str):
         """Write Sources.xml for an Account"""
-        with open(
-            path.join(self.account_dir(account), SOURCES_FILE), "w"
-        ) as sources_file:
-            sources_file.write(sources_xml)
+        save_file = path.join(self.account_dir(account), SOURCES_FILE)
+        try:
+            with open(save_file, "w") as sources_file:
+                sources_file.write(sources_xml)
+        except OSError as e:
+            logger.error(f"Could not write sources XML {save_file}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write sources"
+            )
 
     def find_device(self, device_id: str) -> tuple[DeviceInfo | None, str | None]:
         """Looks for Device in datastore.
@@ -562,11 +596,10 @@ class DataStore:
         type = strip_element_text(info_elem.find("type"))
         module_type = strip_element_text(info_elem.find("moduleType"))
 
-        try:
-            components = info_elem.find("components").findall("component")  # type: ignore
-        except Exception:
-            # TODO narrow exception class
-            components = []
+        components_elem = info_elem.find("components")
+        components = (
+            components_elem.findall("component") if components_elem is not None else []
+        )
 
         for component in components:
             component_category = strip_element_text(component.find("componentCategory"))
@@ -580,13 +613,9 @@ class DataStore:
                     component.find("serialNumber")
                 )
 
-        try:
-            for network_info in info_elem.findall("networkInfo"):
-                if network_info.attrib.get("type", "") == "SCM":
-                    ip_address = strip_element_text(network_info.find("ipAddress"))
-        except Exception:
-            # TODO narrow exception class
-            ip_address = ""
+        for network_info in info_elem.findall("networkInfo"):
+            if network_info.attrib.get("type", "") == "SCM":
+                ip_address = strip_element_text(network_info.find("ipAddress"))
 
         created_on = strip_element_text(info_elem.find("createdOn"))
         if not created_on:
@@ -671,7 +700,9 @@ class DataStore:
         If the account has no devices, returns an empty list.
         """
         devices: list[str | None] = []
-        for device_id in next(walk(self.account_devices_dir(account_id)), (None, [], []))[1]:
+        for device_id in next(
+            walk(self.account_devices_dir(account_id)), (None, [], [])
+        )[1]:
             devices.append(device_id)
 
         return devices
@@ -709,10 +740,14 @@ class DataStore:
 
         if not label:
             label = f"{DEFAULT_ACCOUNT_LABEL} {account}"
-        # TODO: add error handling if you can't make the directory
-        mkdir(self.account_dir(account, True))
-        mkdir(self.account_devices_dir(account))
-        # create devices subdirectory
+        try:
+            mkdir(self.account_dir(account, True))
+            mkdir(self.account_devices_dir(account))
+        except OSError as e:
+            logger.error(f"Could not create account {account}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not create account"
+            )
         return True
 
     def add_device(
@@ -727,8 +762,13 @@ class DataStore:
         if self.device_exists(account, device_id):
             return None
 
-        # TODO: add error handling if you can't make the directory
-        mkdir(path.join(self.account_devices_dir(account), device_id))
+        try:
+            mkdir(path.join(self.account_devices_dir(account), device_id))
+        except OSError as e:
+            logger.error(f"Could not create device {device_id} for {account}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not create device"
+            )
 
         return self.save_device_info(device, account)
 
@@ -743,9 +783,16 @@ class DataStore:
         if not self.device_exists(account, device_id):
             return False
 
-        # TODO: add error handling if you can't delete the files
-        remove(path.join(self.account_device_dir(account, device_id), DEVICE_INFO_FILE))
-        rmdir(path.join(self.account_devices_dir(account), device_id))
+        try:
+            remove(
+                path.join(self.account_device_dir(account, device_id), DEVICE_INFO_FILE)
+            )
+            rmdir(path.join(self.account_devices_dir(account), device_id))
+        except OSError as e:
+            logger.error(f"Could not remove device {device_id} for {account}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not remove device"
+            )
         return True
 
     ############################################################################

@@ -1,21 +1,11 @@
-"""
-Endpoints for an admin UI.
-
-This is a DRAFT version of the admin ui. The display code is not functioning correctly yet, because the device discovery code isn't working correctly. Before it's considered working even for display-only, it will need to have:
-
-- timeouts for device interaction
-- error handling, with errors reported on the web page
-- guaranteed loading of the page with a status message of some sort after only a few seconds.
-"""
+"""Endpoints for the admin UI."""
 
 import logging
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime
 from http import HTTPStatus
 
-from bosesoundtouchapi.soundtouchclient import SoundTouchDevice  # type: ignore
-from bosesoundtouchapi.soundtouchdiscovery import SoundTouchDiscovery  # type: ignore
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -29,8 +19,6 @@ from soundcork.devices import (
     reboot_speaker,
 )
 from soundcork.ui.speakers import CombinedDevice, Speakers
-
-router = APIRouter(tags=["admin"])
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +37,13 @@ def _check_base_url(base_url: str, device_ips: list[str]) -> dict:
 
     try:
         parsed = urllib.parse.urlparse(base_url)
-    except Exception:
+        host = parsed.hostname or ""
+    except ValueError:
         return {
             "status": "error",
             "base_url": base_url,
             "message": f"base_url '{base_url}' is malformed.",
         }
-
-    host = parsed.hostname or ""
 
     # Warn for hostnames that devices likely cannot resolve
     unresolvable_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "soundcork"}
@@ -158,19 +145,24 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                 found.devices.append(dev)
 
         if check_reachability:
-            # Parallel port-22 checks across all devices (each capped at ~1s).
-            devices_with_ip = [
-                d for d in combined_devices.values() if d.ip
-            ]
+            devices_with_ip = [d for d in combined_devices.values() if d.ip]
             if devices_with_ip:
                 with ThreadPoolExecutor(
                     max_workers=min(8, len(devices_with_ip))
                 ) as pool:
-                    results = pool.map(
-                        addr_is_reachable, [d.ip for d in devices_with_ip]
-                    )
-                    for d, reachable in zip(devices_with_ip, results):
-                        d.reachable = reachable
+                    futures = {
+                        pool.submit(addr_is_reachable, d.ip): d for d in devices_with_ip
+                    }
+                    try:
+                        for future in as_completed(futures, timeout=2):
+                            futures[future].reachable = future.result()
+                    except TimeoutError:
+                        logger.warning("Timed out checking device reachability")
+                    finally:
+                        for future, device in futures.items():
+                            if not future.done():
+                                future.cancel()
+                                device.reachable = False
 
         device_ips = [d.ip for d in combined_devices.values() if d.ip]
         return accounts, device_ips
@@ -182,9 +174,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         The slow UPnP rescan and reachability checks are deferred to
         /admin/devices-fragment, which the page fetches client-side.
         """
-        accounts, device_ips = _build_accounts(
-            refresh=False, check_reachability=False
-        )
+        accounts, device_ips = _build_accounts(refresh=False, check_reachability=False)
         base_url_check = _check_base_url(settings.base_url, device_ips)
         return templates.TemplateResponse(
             request=request,
@@ -206,9 +196,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         force = request.query_params.get("force") == "true"
         # On the auto-fetched render, only force a fresh scan if the cache
         # is stale; the user can hit Refresh to override that.
-        accounts, _ = _build_accounts(
-            refresh=force, check_reachability=True
-        )
+        accounts, _ = _build_accounts(refresh=force, check_reachability=True)
         return templates.TemplateResponse(
             request=request,
             name="admin/_devices_fragment.html",
@@ -239,7 +227,11 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         logger.debug(f"checking for restart for {{device_id}}")
         # only wait up to 120 seconds
         if elapsed >= 120:
-            return RedirectResponse(url=f"/admin/", status_code=HTTPStatus.FOUND)
+            return templates.TemplateResponse(
+                request=request,
+                name="admin/wait.html",
+                context={"elapsed": elapsed, "device_id": device_id, "timed_out": True},
+            )
 
         combined_device = speakers.all_devices().get(device_id)
         if combined_device:
@@ -250,7 +242,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         return templates.TemplateResponse(
             request=request,
             name="admin/wait.html",
-            context={"elapsed": elapsed, "device_id": device_id},
+            context={"elapsed": elapsed, "device_id": device_id, "timed_out": False},
         )
 
     @router.post("/admin/addDevice/{device_id}")
