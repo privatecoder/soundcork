@@ -499,6 +499,7 @@ class Speakers:
                 logger.info(
                     f"Added device {other_id} to zone mastered by {master_id}"
                 )
+                self._sync_zone_volume(master_id, [other_id])
             else:
                 # Create a new zone with `primary` as master, `other` as slave.
                 client = SoundTouchClient(primary.st_device)
@@ -506,21 +507,50 @@ class Speakers:
                 logger.info(
                     f"Created new zone: master={primary_id}, slave={other_id}"
                 )
+                self._sync_zone_volume(primary_id, [other_id])
             return True
         except Exception as e:
             logger.error(f"group_toggle failed for {primary_id}+{other_id}: {e}")
             return False
+
+    def _sync_zone_volume(self, master_id: str, slave_ids: list[str]) -> None:
+        """Best-effort: align every slave's volume with the master so the
+        group plays in sync. Failures are swallowed — the group still works,
+        it just plays at the slaves' previous volumes.
+        """
+        try:
+            master_vol = self.get_volume(master_id)
+            if not master_vol or master_vol.get("actual") is None:
+                return
+            target = int(master_vol["actual"])
+            for slave_id in slave_ids:
+                slave_vol = self.get_volume(slave_id)
+                if slave_vol and int(slave_vol.get("actual", -1)) == target:
+                    continue
+                self.set_volume(slave_id, target)
+                logger.info(
+                    f"Synced volume on {slave_id} to {target} (master {master_id})"
+                )
+        except Exception as e:
+            logger.debug(f"volume sync from {master_id} failed: {e}")
 
     def _remove_from_zone(self, device_id: str, zone: dict | None = None) -> bool:
         """Remove `device_id` from its current multi-room zone."""
         if zone is None:
             zone = self.get_zone(device_id)
         if not zone:
-            return True  # already solo
+            logger.info(f"_remove_from_zone: {device_id} is already solo")
+            return True
 
         cd = self.all_devices().get(device_id)
         if not cd or not cd.st_device:
+            logger.error(f"_remove_from_zone: {device_id} has no st_device")
             return False
+
+        logger.info(
+            f"_remove_from_zone: device={device_id} is_master={zone['is_master']} "
+            f"master={zone['master_device_id']} members={zone['members']}"
+        )
 
         try:
             if zone["is_master"]:
@@ -531,24 +561,40 @@ class Speakers:
                     for m in zone["members"]
                     if m["device_id"] and m["device_id"] != device_id
                 ]
+                logger.info(
+                    f"_remove_from_zone: master {device_id} pulling slaves "
+                    f"{[m.DeviceId for m in members]}"
+                )
                 if members:
                     client.RemoveZoneMembers(members)
                 logger.info(f"Disbanded zone mastered by {device_id}")
                 return True
 
-            # Slave — ask the master to remove it.
+            # Slave — ask the master to remove just this slave.
             master_id = zone["master_device_id"]
             master = self.all_devices().get(master_id)
             if not master or not master.st_device:
+                logger.error(
+                    f"_remove_from_zone: master {master_id} of slave "
+                    f"{device_id} has no st_device — cannot detach"
+                )
                 return False
             client = SoundTouchClient(master.st_device)
-            client.RemoveZoneMembers(
-                [ZoneMember(ipAddress=cd.ip, deviceId=device_id)]
+            slave_member = ZoneMember(ipAddress=cd.ip, deviceId=device_id)
+            logger.info(
+                f"_remove_from_zone: asking master {master_id} ({master.ip}) "
+                f"to drop slave {device_id} ({cd.ip})"
             )
-            logger.info(f"Removed device {device_id} from zone {master_id}")
+            client.RemoveZoneMembers([slave_member])
+            logger.info(
+                f"Removed slave {device_id} from zone mastered by {master_id}"
+            )
             return True
-        except Exception as e:
-            logger.error(f"Could not remove {device_id} from zone: {e}")
+        except Exception:
+            logger.exception(
+                f"Could not remove {device_id} from zone "
+                f"{zone.get('master_device_id')}"
+            )
             return False
 
     def ungroup_device(self, device_id: str) -> bool:

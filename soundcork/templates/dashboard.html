@@ -278,17 +278,19 @@
                                 {% if other_online or device.zone %}
                                 <details class="device-group">
                                     <summary class="device-group-summary">
-                                        {% if device.zone %}
-                                        <span class="device-group-summary-active">
-                                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <span class="device-group-summary-label{% if device.zone %} is-active{% endif %}">
+                                            <svg class="device-group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
                                                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
                                             </svg>
-                                            Grouped with {{ device.zone.peer_names|join(', ') }}
+                                            <span class="device-group-summary-text">
+                                                {% if device.zone %}Grouped with {{ device.zone.peer_names|join(', ') }}
+                                                {% else %}Group with…{% endif %}
+                                            </span>
                                         </span>
-                                        {% else %}
-                                        <span class="device-group-summary-idle">Group with…</span>
-                                        {% endif %}
+                                        <svg class="device-group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <path d="M4 6l4 4 4-4"/>
+                                        </svg>
                                     </summary>
                                     <div class="device-group-body">
                                         {% if other_online %}
@@ -301,6 +303,15 @@
                                                 <button type="submit"
                                                     class="group-peer-chip{% if in_same_zone %} is-active{% endif %}"
                                                     title="{% if in_same_zone %}Remove {{ other.name }} from the group{% else %}Group with {{ other.name }}{% endif %}">
+                                                    {% if in_same_zone %}
+                                                    <svg class="group-peer-chip-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                        <path d="M4 4l8 8M12 4l-8 8"/>
+                                                    </svg>
+                                                    {% else %}
+                                                    <svg class="group-peer-chip-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                        <path d="M8 3v10M3 8h10"/>
+                                                    </svg>
+                                                    {% endif %}
                                                     {{ other.name }}
                                                 </button>
                                             </form>
@@ -310,7 +321,14 @@
                                         {% if device.zone %}
                                         <form action="/miniapp/group-leave" method="post" class="device-group-leave">
                                             <input type="hidden" name="device_id" value="{{ device.device_id }}">
-                                            <button type="submit" class="btn-small btn-danger">Leave group</button>
+                                            <button type="submit" class="btn-group-leave">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                                                    <line x1="3" y1="3" x2="21" y2="21"/>
+                                                </svg>
+                                                Leave group
+                                            </button>
                                         </form>
                                         {% endif %}
                                     </div>
