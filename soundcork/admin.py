@@ -110,8 +110,10 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
     def _build_accounts(
         refresh: bool, check_reachability: bool
-    ) -> tuple[dict[str, "CombinedAccount"], list[str]]:
-        """Build the {account_id: CombinedAccount} mapping plus device IP list.
+    ) -> tuple[dict[str, "CombinedAccount"], list[str], list[tuple[str, str]]]:
+        """Build the {account_id: CombinedAccount} mapping plus device IP list
+        plus a list of configured `(account_id, label)` pairs (for the orphan
+        Repair-Configuration account picker).
 
         Heavy operations are gated:
         - `refresh=True` forces a fresh UPnP scan (~5s). Otherwise uses cache.
@@ -133,20 +135,36 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                     in_soundcork=True,
                 )
 
+        ORPHAN_ACCOUNT_ID = "__unassigned__"
+        # When there's exactly one configured account, devices that the
+        # speaker can't tell us about (empty margeAccountUUID — typically
+        # caused by a botched Remove that left the soundcork override file
+        # in place) get attributed to it. The template will show a Repair
+        # button for them. With 0 or 2+ accounts we keep them in an
+        # Unassigned bucket because we can't safely guess.
+        real_accounts = [aid for aid in account_ids if aid]
+        single_account = real_accounts[0] if len(real_accounts) == 1 else None
+
         for key in sorted(combined_devices):
             dev = combined_devices[key]
             account_id = dev.account
-            if account_id:
-                found = accounts.get(account_id)
-                if not found:
-                    found = CombinedAccount(
-                        id=account_id,
-                        label=_account_label(account_id),
-                        devices=[],
-                        in_soundcork=False,
-                    )
-                    accounts[account_id] = found
-                found.devices.append(dev)
+            if not account_id and single_account:
+                account_id = single_account
+            account_id = account_id or ORPHAN_ACCOUNT_ID
+            found = accounts.get(account_id)
+            if not found:
+                if account_id == ORPHAN_ACCOUNT_ID:
+                    label = "Unassigned / unconfigured"
+                else:
+                    label = _account_label(account_id)
+                found = CombinedAccount(
+                    id=account_id,
+                    label=label,
+                    devices=[],
+                    in_soundcork=False,
+                )
+                accounts[account_id] = found
+            found.devices.append(dev)
 
         if check_reachability:
             devices_with_ip = [d for d in combined_devices.values() if d.ip]
@@ -169,7 +187,12 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                                 device.reachable = False
 
         device_ips = [d.ip for d in combined_devices.values() if d.ip]
-        return accounts, device_ips
+        configured_accounts = [
+            (aid, accounts[aid].label)
+            for aid in real_accounts
+            if aid in accounts
+        ]
+        return accounts, device_ips, configured_accounts
 
     @router.get("/admin/", response_class=HTMLResponse)
     async def admin(request: Request):
@@ -178,7 +201,9 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         The slow UPnP rescan and reachability checks are deferred to
         /admin/devices-fragment, which the page fetches client-side.
         """
-        accounts, device_ips = _build_accounts(refresh=False, check_reachability=False)
+        accounts, device_ips, _ = _build_accounts(
+            refresh=False, check_reachability=False
+        )
         base_url_check = _check_base_url(settings.base_url, device_ips)
         return templates.TemplateResponse(
             request=request,
@@ -200,11 +225,16 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         force = request.query_params.get("force") == "true"
         # On the auto-fetched render, only force a fresh scan if the cache
         # is stale; the user can hit Refresh to override that.
-        accounts, _ = _build_accounts(refresh=force, check_reachability=True)
+        accounts, _, configured_accounts = _build_accounts(
+            refresh=force, check_reachability=True
+        )
         return templates.TemplateResponse(
             request=request,
             name="admin/_devices_fragment.html",
-            context={"accounts": accounts},
+            context={
+                "accounts": accounts,
+                "configured_accounts": configured_accounts,
+            },
         )
 
     @router.post("/admin/switchToSoundcork/{device_id}")
@@ -229,18 +259,90 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         # page anymore.
         return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
+    def _resolve_target_account(
+        form_account: object, real_accounts: list[str]
+    ) -> str | None:
+        """Pick which soundcork account to attribute a device to.
+
+        Used by addDevice/repairDevice when the speaker can't tell us via
+        its own /info margeAccountUUID. Order:
+          1. form-supplied account_id (must match a known account).
+          2. the sole configured account, if exactly one.
+          3. None → caller refuses the operation.
+        """
+        if isinstance(form_account, str) and form_account.strip():
+            candidate = form_account.strip()
+            if candidate in real_accounts:
+                return candidate
+            logger.warning(
+                f"unknown account_id={candidate!r} (known: {real_accounts})"
+            )
+            return None
+        if len(real_accounts) == 1:
+            return real_accounts[0]
+        return None
+
     @router.post("/admin/addDevice/{device_id}")
-    async def add_device_to_soundcork(device_id: str):
+    async def add_device_to_soundcork(device_id: str, request: Request):
+        """Bring a device into soundcork's datastore.
+
+        Delegates account resolution to `add_device_by_ip`:
+        - If the speaker's /info has a margeAccountUUID, that's used.
+        - Else if the form supplied `account_id` (sent when the UI rendered
+          a multi-account picker), that's used.
+        - Else if exactly one configured account exists, that's used.
+        - Else the call fails — the UI shouldn't have offered the action.
+        """
         logger.info(f"add device {device_id} to soundcork")
         combined_device = speakers.all_devices().get(device_id)
-        if combined_device:
-            st_device = combined_device.st_device
-            if st_device:
-                hostname = st_device.Host
-                success = await asyncio.to_thread(add_device_by_ip, hostname)
-                logger.info(f"added account from {hostname} success = {success}")
+        if not combined_device or not combined_device.st_device:
+            logger.warning(f"add device: unknown / unreachable {device_id}")
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
-        return RedirectResponse(url=f"/admin/", status_code=HTTPStatus.FOUND)
+        hostname = combined_device.st_device.Host
+        real_accounts = [aid for aid in datastore.list_accounts() if aid]
+        form_data = await request.form()
+        target_account = _resolve_target_account(
+            form_data.get("account_id"), real_accounts
+        )
+        success = await asyncio.to_thread(
+            add_device_by_ip, hostname, target_account
+        )
+        logger.info(f"add device {device_id} on {hostname} success={success}")
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+    @router.post("/admin/repairDevice/{device_id}")
+    async def repair_device(device_id: str, request: Request):
+        """Back-compat alias for addDevice. The Add path now handles the
+        orphan / no-margeAccountUUID case directly, so this endpoint is
+        kept only so older client form posts continue to work.
+        """
+        return await add_device_to_soundcork(device_id, request)
+
+    @router.post("/admin/resetDevice/{device_id}")
+    async def reset_device(device_id: str):
+        """Escape hatch for orphan devices: delete soundcork's override file
+        from the speaker over SSH and reboot, so it goes back to vanilla
+        Bose firmware. Doesn't touch the datastore — orphans aren't in it
+        anyway, and we'd never call this on a fully-configured device.
+        """
+        logger.info(f"reset_device {device_id}")
+        combined_device = speakers.all_devices().get(device_id)
+        if not combined_device or not combined_device.st_device:
+            logger.warning(f"reset_device: unknown device {device_id}")
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+        hostname = combined_device.st_device.Host
+
+        def _do_reset() -> bool:
+            ok = remove_file_from_speaker(hostname, SPEAKER_OVERRIDE_SDK_LOCATION)
+            logger.info(f"reset_device: override delete on {hostname} success={ok}")
+            reboot_speaker(hostname)
+            return ok
+
+        await asyncio.to_thread(_do_reset)
+        speakers.clear_device(device_id)
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     @router.post("/admin/renameDevice/{device_id}")
     async def rename_device(device_id: str, request: Request):
@@ -298,14 +400,17 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
     async def remove_device(device_id: str):
         """Remove a device from soundcork.
 
-        Two-step cleanup, both best-effort:
+        Two-step cleanup:
         1. If the device is reachable AND currently using soundcork as its
            Marge server, SSH to it and delete the OverrideSdkPrivateCfg.xml
            override so it falls back to Bose's firmware config, then reboot.
-        2. Delete the device entry from soundcork's datastore.
-
-        If the device is offline or unreachable, only step 2 happens — the
-        user is responsible for clearing the override manually.
+           If the SSH delete fails (network blip, permission issue, …) we
+           abort *without* touching the datastore so we don't leave the
+           speaker pointed at soundcork with no record on our side (orphan
+           state). The user can retry, or hit Reset to Bose to force.
+        2. Otherwise (speaker offline / unreachable / already on Bose):
+           delete the device entry from soundcork's datastore. The user is
+           responsible for the speaker firmware in that case.
         """
         logger.info(f"remove device {device_id} from soundcork")
         combined_device = speakers.all_devices().get(device_id)
@@ -321,6 +426,15 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                     SPEAKER_OVERRIDE_SDK_LOCATION,
                 )
                 logger.info(f"removed override on {hostname}: success={ok}")
+                if not ok:
+                    logger.error(
+                        f"remove_device {device_id}: SSH override-removal "
+                        f"failed; keeping datastore row to avoid an orphan "
+                        f"state. Retry, or use Reset to Bose."
+                    )
+                    return RedirectResponse(
+                        url="/admin/", status_code=HTTPStatus.FOUND
+                    )
                 await asyncio.to_thread(reboot_speaker, hostname)
                 speakers.clear_device(device_id)
 

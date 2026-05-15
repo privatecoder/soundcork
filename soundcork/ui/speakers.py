@@ -202,12 +202,15 @@ class Speakers:
                 sc_device.online = True
                 sc_device.st_device = st_device
             else:
+                # StreamingAccountUUID can be missing from /info on devices
+                # that have never registered with Bose or that lost their
+                # config — coerce to "" so the Pydantic model is happy.
                 new_cd = CombinedDevice(
                     id=id,
                     ip=st_device.Host,
                     name=st_device.DeviceName,
                     online=True,
-                    account=st_device.StreamingAccountUUID,
+                    account=st_device.StreamingAccountUUID or "",
                     in_soundcork=False,
                     marge_server=st_device.StreamingUrl,
                     reachable=False,

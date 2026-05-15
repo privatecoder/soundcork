@@ -208,6 +208,28 @@ def read_file_from_speaker_http(host: str, path: str) -> str:
         return ""
 
 
+def set_marge_account(host: str, account_uuid: str) -> bool:
+    """Tell the speaker firmware which marge account it belongs to.
+
+    The speaker stores this in NVRAM and includes it as <margeAccountUUID>
+    in /info from then on. Used to repair "orphan" devices that have a
+    soundcork override file but no account UUID.
+    """
+    url = f"http://{host}:{SPEAKER_HTTP_PORT}/setMargeAccount"
+    body = f'<setMargeAccount margeAccountUUID="{account_uuid}"/>'.encode()
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/xml"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
+            status = resp.status
+        logger.info(f"setMargeAccount on {host} -> UUID={account_uuid} status={status}")
+        return 200 <= status < 300
+    except (OSError, TimeoutError, urllib.error.URLError) as e:
+        logger.error(f"setMargeAccount failed on {host}: {e}")
+        return False
+
+
 def get_bose_devices() -> list[upnpclient.upnp.Device]:
     """Return a list of all Bose SoundTouch UPnP devices on the network"""
     devices = upnpclient.discover()
@@ -267,35 +289,77 @@ def addr_is_reachable(device_address: str) -> bool:
         s.close()
 
 
-def add_device(device: upnpclient.upnp.Device) -> bool:
+def add_device(
+    device: upnpclient.upnp.Device, target_account: str | None = None
+) -> bool:
     hostname = hostname_for_device(device)
-    return add_device_by_ip(hostname)
+    return add_device_by_ip(hostname, target_account)
 
 
-def add_device_by_ip(hostname: str) -> bool:
+def add_device_by_ip(hostname: str, target_account: str | None = None) -> bool:
+    """Add a device to soundcork's datastore.
+
+    Resolves the target account in this order:
+    1. The speaker's /info `<margeAccountUUID>`, if non-empty.
+    2. The caller-supplied `target_account`.
+    3. The sole configured soundcork account, if exactly one is configured.
+    4. Otherwise fail.
+
+    When falling back to (2) or (3) the chosen UUID is also pushed to the
+    speaker's NVRAM via /setMargeAccount (best-effort — even if that fails
+    the soundcork datastore is the authoritative source for marge XML
+    responses).
+    """
     datastore = _datastore()
-    info_elem = ET.fromstring(read_device_info(hostname))
-    device_id = info_elem.attrib.get("deviceID", "")
-    # If margeAccountUUID is not present, the .text will correctly raise an error here
-    account_id = info_elem.find("margeAccountUUID").text  # type: ignore
-    if account_id:
-        if not datastore.account_exists(account_id):  # type: ignore
-            recents = read_recents(hostname)
-            presets = read_presets(hostname)
-            sources = read_sources(hostname)
-            # FIXME get the account email address for this
-            account_name = None
-            add_account(account_id, recents, presets, sources, account_name, datastore)
 
-        datastore.add_device(
-            account_id,
-            device_id,
-            datastore.device_info_from_device_info_xml(
-                ET.fromstring(read_device_info(hostname))
-            ),
-        )  # type: ignore
-        return True
-    return False
+    info_xml = read_device_info(hostname)
+    if not info_xml:
+        logger.warning(f"add_device_by_ip: /info empty on {hostname}")
+        return False
+    try:
+        info_elem = ET.fromstring(info_xml)
+    except ET.ParseError as e:
+        logger.error(f"add_device_by_ip: /info parse error on {hostname}: {e}")
+        return False
+
+    device_id = info_elem.attrib.get("deviceID", "")
+    if not device_id:
+        logger.warning(f"add_device_by_ip: /info missing deviceID on {hostname}")
+        return False
+
+    account_elem = info_elem.find("margeAccountUUID")
+    account_id = (account_elem.text if account_elem is not None else None) or ""
+
+    if not account_id:
+        # Speaker doesn't know its own account UUID — adopt it into the
+        # caller-supplied account, or the only configured one.
+        account_id = target_account or ""
+        if not account_id:
+            real_accounts = [aid for aid in datastore.list_accounts() if aid]
+            if len(real_accounts) == 1:
+                account_id = real_accounts[0]
+        if not account_id:
+            logger.warning(
+                f"add_device_by_ip: empty margeAccountUUID on {hostname} "
+                f"and no fallback account available"
+            )
+            return False
+        # Persist the chosen UUID on the speaker (best-effort).
+        set_marge_account(hostname, account_id)
+
+    if not datastore.account_exists(account_id):
+        recents = read_recents(hostname)
+        presets = read_presets(hostname)
+        sources = read_sources(hostname)
+        # FIXME get the account email address for this
+        add_account(account_id, recents, presets, sources, None, datastore)
+
+    datastore.add_device(
+        account_id,
+        device_id,
+        datastore.device_info_from_device_info_xml(info_elem),
+    )
+    return True
 
 
 def add_account(

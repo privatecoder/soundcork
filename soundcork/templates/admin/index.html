@@ -194,6 +194,9 @@
                     const html = await res.text();
                     if (accountsSection) accountsSection.innerHTML = html;
                     bindInlineEdit();
+                    // Restore reboot banners for any device that's mid-flight on
+                    // a different card so a sibling refresh doesn't wipe them.
+                    repaintInflightBanners();
                     setLoading(false, { message: 'Devices up to date' });
                 } catch (err) {
                     setLoading(false, {
@@ -207,25 +210,66 @@
                 refreshBtn.addEventListener('click', () => loadDevices(true));
             }
 
-            // Track devices currently in the middle of a reboot so a
-            // mid-flight fragment swap doesn't overwrite their countdown.
-            const REBOOT_DEADLINE_MS = 120 * 1000;
-            const inflightReboots = new Map();   // device_id → finishedPromise
+            // Devices currently waiting on a reboot.  Keyed by device_id so any
+            // fragment swap (from this card OR a sibling) can re-paint the
+            // banner with the right remaining time without disturbing other
+            // in-flight operations.
+            const REBOOT_TOTAL_SECONDS = 120;
+            const inflightReboots = new Map();   // device_id → { endTime, message }
+            let countdownTimer = null;
 
             function cardSelector(deviceId) {
                 return `[data-device-id="${CSS.escape(deviceId)}"]`;
             }
 
-            function renderRebootBanner(card, secondsLeft) {
-                const actions = card.querySelector('.admin-device-actions');
-                if (!actions) return null;
-                actions.innerHTML = `
-                    <div class="device-reboot-status" role="status" aria-live="polite">
-                        <span class="spinner" aria-hidden="true"></span>
-                        <span class="device-reboot-text">Rebooting speaker… <strong class="device-reboot-countdown">${secondsLeft}</strong>s left</span>
-                    </div>
-                `;
-                return actions.querySelector('.device-reboot-countdown');
+            function repaintInflightBanners() {
+                for (const [deviceId, info] of inflightReboots) {
+                    const card = document.querySelector(cardSelector(deviceId));
+                    if (!card) continue;
+                    const actions = card.querySelector('.admin-device-actions');
+                    if (!actions) continue;
+                    const secondsLeft = Math.max(
+                        0,
+                        Math.floor((info.endTime - Date.now()) / 1000),
+                    );
+                    const existing = actions.querySelector('.device-reboot-status');
+                    if (existing) {
+                        const countdownEl = existing.querySelector('.device-reboot-countdown');
+                        if (countdownEl) countdownEl.textContent = secondsLeft;
+                        continue;
+                    }
+                    actions.innerHTML = `
+                        <div class="device-reboot-status" role="status" aria-live="polite">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="device-reboot-text">${info.message}… <strong class="device-reboot-countdown">${secondsLeft}</strong>s left</span>
+                        </div>
+                    `;
+                }
+            }
+
+            function ensureCountdownTimer() {
+                if (countdownTimer) return;
+                countdownTimer = setInterval(() => {
+                    if (inflightReboots.size === 0) {
+                        clearInterval(countdownTimer);
+                        countdownTimer = null;
+                        return;
+                    }
+                    repaintInflightBanners();
+                }, 1000);
+            }
+
+            function beginReboot(deviceId, message, totalSeconds) {
+                inflightReboots.set(deviceId, {
+                    endTime: Date.now() + totalSeconds * 1000,
+                    message,
+                });
+                repaintInflightBanners();
+                ensureCountdownTimer();
+            }
+
+            function endReboot(deviceId) {
+                inflightReboots.delete(deviceId);
             }
 
             function renderRebootError(card, msg) {
@@ -239,7 +283,7 @@
             }
 
             async function waitForDeviceState(deviceId, isDoneFn) {
-                const deadline = Date.now() + REBOOT_DEADLINE_MS;
+                const deadline = Date.now() + REBOOT_TOTAL_SECONDS * 1000;
                 while (Date.now() < deadline) {
                     await new Promise(r => setTimeout(r, 5000));
                     try {
@@ -260,57 +304,99 @@
                 return null;
             }
 
-            function startCountdown(card, totalSeconds) {
-                const el = renderRebootBanner(card, totalSeconds);
-                let secondsLeft = totalSeconds;
-                const handle = setInterval(() => {
-                    secondsLeft -= 1;
-                    if (el) el.textContent = Math.max(0, secondsLeft);
-                    if (secondsLeft <= 0) clearInterval(handle);
-                }, 1000);
-                return () => clearInterval(handle);
-            }
-
-            async function handleSwitchSubmit(form) {
+            async function runReboot(form, opts) {
+                // Generic "fire a POST that will reboot the speaker, show a
+                // countdown, then poll the fragment until the device reaches
+                // the expected state." `opts.isDoneFn(card)` decides when to
+                // stop polling; `opts.message` is the banner label.
                 const action = form.getAttribute('action');
                 const deviceId = action.split('/').pop();
                 const card = document.querySelector(cardSelector(deviceId));
                 if (!card) return;
 
-                const stopCountdown = startCountdown(card, 120);
+                beginReboot(deviceId, opts.message, REBOOT_TOTAL_SECONDS);
 
-                const finished = (async () => {
-                    try {
-                        await fetch(action, {
-                            method: 'POST',
-                            credentials: 'same-origin',
-                            redirect: 'follow',
-                        });
-                    } catch (err) { /* fall through to polling */ }
+                try {
+                    await fetch(action, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        redirect: 'follow',
+                    });
+                } catch (err) { /* fall through to polling */ }
 
-                    // Done when the device shows up again with marge==Soundcork.
-                    const html = await waitForDeviceState(deviceId, (newCard) =>
-                        newCard && newCard.dataset.marge === 'Soundcork'
-                            && newCard.dataset.online === 'true'
+                const html = await waitForDeviceState(deviceId, opts.isDoneFn);
+                endReboot(deviceId);
+
+                if (html) {
+                    accountsSection.innerHTML = html;
+                    bindInlineEdit();
+                    // Other devices may still be mid-flight — restore them.
+                    repaintInflightBanners();
+                } else {
+                    renderRebootError(
+                        document.querySelector(cardSelector(deviceId)),
+                        opts.timeoutMessage ||
+                            "Speaker didn't come back online within 2 minutes. Refresh and check the Bose app.",
                     );
-                    stopCountdown();
-
-                    if (html) {
-                        accountsSection.innerHTML = html;
-                        bindInlineEdit();
-                    } else {
-                        renderRebootError(
-                            document.querySelector(cardSelector(deviceId)),
-                            "Speaker didn't come back online within 2 minutes. Refresh and check the Bose app."
-                        );
-                    }
-                })();
-
-                inflightReboots.set(deviceId, finished);
-                finished.finally(() => inflightReboots.delete(deviceId));
+                }
             }
 
-            // Intercept Switch-to-Soundcork and inline-edit submits anywhere on the page.
+            function handleSwitchSubmit(form) {
+                runReboot(form, {
+                    message: 'Rebooting speaker',
+                    isDoneFn: (newCard) =>
+                        newCard
+                        && newCard.dataset.marge === 'Soundcork'
+                        && newCard.dataset.online === 'true',
+                });
+            }
+
+            function handleRemoveSubmit(form) {
+                const action = form.getAttribute('action');
+                const deviceId = action.split('/').pop();
+                const card = document.querySelector(cardSelector(deviceId));
+                const willReboot = card && card.dataset.marge === 'Soundcork';
+
+                if (!willReboot) {
+                    // Datastore-only removal (device was on Bose / unreachable
+                    // / not in soundcork). No countdown needed.
+                    return handleQuickAction(form);
+                }
+                runReboot(form, {
+                    message: 'Reverting speaker',
+                    isDoneFn: (newCard) =>
+                        // Done when the speaker is back online but no longer
+                        // reports Soundcork as its marge server.
+                        !!newCard
+                        && newCard.dataset.online === 'true'
+                        && newCard.dataset.marge !== 'Soundcork',
+                    timeoutMessage:
+                        "Speaker didn't come back online within 2 minutes. Refresh and check.",
+                });
+            }
+
+            async function handleQuickAction(form) {
+                // For non-reboot POSTs (Add / Repair / Remove-while-not-on-
+                // Soundcork): fire-and-refresh-fragment, with no full page
+                // reload — so any in-flight reboot banners on other cards
+                // survive. FormData is included so e.g. the orphan-Repair
+                // account picker's value goes on the wire.
+                const button = form.querySelector('button[type="submit"]');
+                if (button) button.disabled = true;
+                try {
+                    await fetch(form.action, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        body: new FormData(form),
+                        redirect: 'follow',
+                    });
+                } catch (err) { /* refresh fragment anyway */ }
+                await loadDevices(false);
+            }
+
+            // Intercept all admin POSTs so the browser never does a full page
+            // reload — any sibling card mid-reboot would otherwise lose its
+            // countdown when the page tears down.
             document.addEventListener('submit', (e) => {
                 const form = e.target;
                 if (!(form instanceof HTMLFormElement)) return;
@@ -318,6 +404,33 @@
                 if (action.startsWith('/admin/switchToSoundcork/')) {
                     e.preventDefault();
                     handleSwitchSubmit(form);
+                    return;
+                }
+                if (action.startsWith('/admin/removeDevice/')) {
+                    e.preventDefault();
+                    handleRemoveSubmit(form);
+                    return;
+                }
+                if (action.startsWith('/admin/resetDevice/')) {
+                    e.preventDefault();
+                    runReboot(form, {
+                        message: 'Resetting speaker',
+                        // Done when the speaker is back online but no longer
+                        // reports Soundcork as its marge server (override
+                        // removed, reboot completed).
+                        isDoneFn: (newCard) =>
+                            !!newCard
+                            && newCard.dataset.online === 'true'
+                            && newCard.dataset.marge !== 'Soundcork',
+                        timeoutMessage:
+                            "Speaker didn't come back online within 2 minutes. Refresh and check.",
+                    });
+                    return;
+                }
+                if (action.startsWith('/admin/addDevice/')
+                    || action.startsWith('/admin/repairDevice/')) {
+                    e.preventDefault();
+                    handleQuickAction(form);
                     return;
                 }
                 if (form.classList.contains('inline-edit-form')) {

@@ -136,16 +136,29 @@
                 </div>
             </div>
 
-            <div class="admin-device-actions">
+            {% set needs_account_picker = not device.in_soundcork and device.reachable and not device.account and configured_accounts and configured_accounts|length > 1 %}
+            {% set show_reset = not device.in_soundcork and device.reachable and device.marge_server == "Soundcork" %}
+            <div class="admin-device-actions {% if needs_account_picker or show_reset %}admin-device-actions-stacked{% endif %}">
                 {% if not device.in_soundcork %}
-                    {% if not account.in_soundcork and device.reachable %}
-                    <form action="/admin/addDevice/{{ device.id }}" method="POST" class="device-action-form">
-                        <button type="submit" class="btn-primary">Configure Account</button>
-                    </form>
-                    {% elif account.in_soundcork %}
-                    <form action="/admin/addDevice/{{ device.id }}" method="POST" class="device-action-form">
+                    {% if device.reachable %}
+                    <form action="/admin/addDevice/{{ device.id }}" method="POST" class="device-action-form {% if needs_account_picker %}device-repair-form{% endif %}">
+                        {% if needs_account_picker %}
+                        <label for="add-{{ device.id }}" class="sr-only">Account to add this device to</label>
+                        <select id="add-{{ device.id }}" name="account_id" class="device-action-select" required>
+                            <option value="" disabled selected>Choose account…</option>
+                            {% for aid, alabel in configured_accounts %}
+                            <option value="{{ aid }}">{{ alabel }}</option>
+                            {% endfor %}
+                        </select>
+                        {% endif %}
                         <button type="submit" class="btn-primary">Add to Soundcork</button>
                     </form>
+                    {% if show_reset %}
+                    <form action="/admin/resetDevice/{{ device.id }}" method="POST" class="device-action-form"
+                          onsubmit="return confirm('Reset {{ device.name }}? The soundcork override file will be deleted from the speaker and the speaker will reboot back to Bose firmware defaults.');">
+                        <button type="submit" class="btn-danger">Reset to Bose</button>
+                    </form>
+                    {% endif %}
                     {% endif %}
                 {% else %}
                     {% if device.reachable and device.marge_server != "Soundcork" %}
