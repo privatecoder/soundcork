@@ -99,24 +99,64 @@
             const statusText = statusEl ? statusEl.querySelector('.admin-status-text') : null;
             const refreshBtn = document.getElementById('admin-refresh-btn');
 
-            function bindRenameForms() {
-                const selectors = [
-                    ['.account-rename-form', 'input[name="label"]'],
-                    ['.device-rename-form',  'input[name="name"]'],
-                ];
-                for (const [formSel, inputSel] of selectors) {
-                    document.querySelectorAll(formSel).forEach(form => {
-                        const input = form.querySelector(inputSel);
-                        const button = form.querySelector('button[type="submit"]');
-                        if (!input || !button) return;
-                        const sync = () => {
-                            const v = input.value.trim();
-                            button.disabled = (v === '' || v === input.dataset.original);
-                        };
+            function bindInlineEdit() {
+                document.querySelectorAll('.inline-edit').forEach(container => {
+                    if (container.dataset.bound === 'true') return;
+                    container.dataset.bound = 'true';
+
+                    const toggle = container.querySelector('.inline-edit-toggle');
+                    const form   = container.querySelector('.inline-edit-form');
+                    const input  = form ? form.querySelector('input') : null;
+                    const save   = form ? form.querySelector('.inline-edit-save') : null;
+                    const cancel = form ? form.querySelector('.inline-edit-cancel') : null;
+                    if (!toggle || !form || !input || !save || !cancel) return;
+
+                    const sync = () => {
+                        const v = input.value.trim();
+                        save.disabled = (v === '' || v === input.dataset.original);
+                    };
+                    sync();
+                    input.addEventListener('input', sync);
+
+                    const enter = () => {
+                        container.classList.add('is-editing');
+                        input.value = input.dataset.original;
                         sync();
-                        input.addEventListener('input', sync);
+                        input.focus();
+                        input.select();
+                    };
+                    const exit = () => {
+                        container.classList.remove('is-editing');
+                        input.value = input.dataset.original;
+                        sync();
+                    };
+
+                    toggle.addEventListener('click', enter);
+                    cancel.addEventListener('click', exit);
+                    input.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape') {
+                            e.preventDefault();
+                            exit();
+                        }
                     });
-                }
+                });
+            }
+
+            async function handleInlineEditSubmit(form) {
+                const input = form.querySelector('input');
+                const save  = form.querySelector('.inline-edit-save');
+                if (!input || !save || save.disabled) return;
+
+                save.disabled = true;
+                try {
+                    await fetch(form.action, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        body: new FormData(form),
+                        redirect: 'follow',
+                    });
+                } catch (err) { /* fall through; reload fragment anyway */ }
+                await loadDevices(false);
             }
 
             function setLoading(loading, opts) {
@@ -153,7 +193,7 @@
                     if (!res.ok) throw new Error('HTTP ' + res.status);
                     const html = await res.text();
                     if (accountsSection) accountsSection.innerHTML = html;
-                    bindRenameForms();
+                    bindInlineEdit();
                     setLoading(false, { message: 'Devices up to date' });
                 } catch (err) {
                     setLoading(false, {
@@ -257,7 +297,7 @@
 
                     if (html) {
                         accountsSection.innerHTML = html;
-                        bindRenameForms();
+                        bindInlineEdit();
                     } else {
                         renderRebootError(
                             document.querySelector(cardSelector(deviceId)),
@@ -270,7 +310,7 @@
                 finished.finally(() => inflightReboots.delete(deviceId));
             }
 
-            // Intercept Switch-to-Soundcork submits anywhere on the page.
+            // Intercept Switch-to-Soundcork and inline-edit submits anywhere on the page.
             document.addEventListener('submit', (e) => {
                 const form = e.target;
                 if (!(form instanceof HTMLFormElement)) return;
@@ -278,6 +318,11 @@
                 if (action.startsWith('/admin/switchToSoundcork/')) {
                     e.preventDefault();
                     handleSwitchSubmit(form);
+                    return;
+                }
+                if (form.classList.contains('inline-edit-form')) {
+                    e.preventDefault();
+                    handleInlineEditSubmit(form);
                 }
             });
 
