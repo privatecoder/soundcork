@@ -119,10 +119,10 @@ To configure the server, go to the ```soundcork``` subdirectory of the repositor
 	
 new contents of ```.env.private```:
 
-	base_url = "http://soundcork.local.example.com:8000"
-	data_dir = "/home/soundcork/db"
+	BASE_URL = "http://soundcork.local.example.com:8000"
+	DATA_DIR = "/home/soundcork/db"
 
-> **Important:** `base_url` must be reachable **from your speakers**, not just from the host running soundcork. Do not use `localhost`, `127.0.0.1`, or Docker container names. Use the host's LAN IP (e.g., `http://192.168.1.50:8000`) or a DNS name resolvable on your speaker network. If speakers can't reach `base_url`, sources like TUNEIN will fail to activate and presets will return `UNKNOWN_SOURCE_ERROR`. See [docs/deployment.md](docs/deployment.md) for details.
+> **Important:** `BASE_URL` must be reachable **from your speakers**, not just from the host running soundcork. Do not use `localhost`, `127.0.0.1`, or Docker container names. Use the host's LAN IP (e.g., `http://192.168.1.50:8000`) or a DNS name resolvable on your speaker network. If speakers can't reach `BASE_URL`, sources like TUNEIN will fail to activate and presets will return `UNKNOWN_SOURCE_ERROR`. See [docs/deployment.md](docs/deployment.md) for details.
 
 and then start the server
 
@@ -175,7 +175,7 @@ This should return something like
 	<type>SoundTouch 20</type>
 	<margeAccountUUID>1234567</margeAccountUUID>
 	
-So now your have your account number of ```1234567``` and device ID of ```A0B1C2D3E4F5```. Now, back on your soundcork system, create directories for the account and device in your ```data_dir```:
+So now your have your account number of ```1234567``` and device ID of ```A0B1C2D3E4F5```. Now, back on your soundcork system, create directories for the account and device in your ```DATA_DIR```:
 
 	mkdir -p /home/soundcork/db/1234567/devices/A0B1C2D3E4F5
 

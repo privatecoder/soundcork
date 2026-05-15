@@ -4,12 +4,13 @@ services:
     # we have to have access to the speakers for config, so run in host mode
     network_mode: host
     environment:
-      # Configure the base url where soundcork is hosted.
-      # Use port 8000 for direct access or port 8001 for access through nginx-ETag.
-      - base_url=http://soundcork:8001
-      - data_dir=/soundcork/data
+      # URL your speakers use to reach soundcork. Must be device-reachable —
+      # use the host's LAN IP (e.g. http://192.168.1.50:8001), not localhost
+      # or a container name. Port 8001 goes through nginx-ETag; 8000 is direct.
+      - BASE_URL=http://192.168.1.50:8001
+      - DATA_DIR=/soundcork/data
       # Log all 404/unhandled requests to this directory (for debugging)
-      - unhandled_log_dir=/soundcork/logs/traffic
+      - UNHANDLED_LOG_DIR=/soundcork/logs/traffic
       # Set DEV_MODE=true to run in development mode with hot reload and detailed logging
       - DEV_MODE=${DEV_MODE:-false}
     volumes:
