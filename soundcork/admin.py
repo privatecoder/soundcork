@@ -248,8 +248,10 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         if not new_name:
             return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
+        logger.info(f"rename device {device_id} to {new_name!r}")
         combined_device = speakers.all_devices().get(device_id)
         if not combined_device:
+            logger.warning(f"rename requested for unknown device {device_id}")
             return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
         # 1. Push the new name to the speaker (if online). The speaker
@@ -272,8 +274,6 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
             except Exception as e:
                 logger.error(f"datastore save_device_info failed: {e}")
 
-        # 3. Force a fresh probe so the cached DeviceName picks up the change.
-        speakers.clear_device(device_id)
         return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     @router.post("/admin/removeDevice/{device_id}")
