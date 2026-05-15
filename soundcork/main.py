@@ -535,7 +535,7 @@ async def post_account_device(
     "/marge/streaming/account/{account}/device/{device_id}",
     response_class=BoseXMLResponse,
     tags=["marge"],
-    status_code=HTTPStatus.CREATED,
+    status_code=HTTPStatus.OK,
     dependencies=[
         Depends(
             Etag(

@@ -1,6 +1,8 @@
 """Endpoints for the admin UI."""
 
+import asyncio
 import logging
+import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime
@@ -213,11 +215,13 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
             st_device = combined_device.st_device
             if st_device:
                 hostname = st_device.Host
-                success = override_speaker_config(hostname)
+                # SSH + SCP + reboot are blocking; run them off the event loop
+                # so other admin/dashboard/marge requests stay responsive.
+                success = await asyncio.to_thread(override_speaker_config, hostname)
                 logger.info(
                     f"override speaker config on {hostname} success = {success}"
                 )
-                reboot = reboot_speaker(hostname)
+                reboot = await asyncio.to_thread(reboot_speaker, hostname)
                 logger.info(f"reboot {hostname} result {reboot}")
                 speakers.clear_device(device_id)
         # The client-side polls /admin/devices-fragment until the device
@@ -233,7 +237,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
             st_device = combined_device.st_device
             if st_device:
                 hostname = st_device.Host
-                success = add_device_by_ip(hostname)
+                success = await asyncio.to_thread(add_device_by_ip, hostname)
                 logger.info(f"added account from {hostname} success = {success}")
 
         return RedirectResponse(url=f"/admin/", status_code=HTTPStatus.FOUND)
@@ -257,8 +261,22 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         # 1. Push the new name to the speaker (if online). The speaker
         #    will start advertising it on its UPnP friendlyName and /info
         #    immediately.
+        #
+        #    Run the blocking urllib3 SetName in a worker thread — the speaker's
+        #    /name handler calls back into soundcork (PUT /marge/.../device/{id})
+        #    *while* the response is in flight, so the asyncio event loop must
+        #    stay free to serve that marge callback. Without to_thread() the
+        #    handler deadlocks until the speaker's 60s internal timeout fires.
         if combined_device.online and combined_device.st_device:
-            speakers.rename_device(device_id, new_name)
+            t0 = time.monotonic()
+            logger.info(f"rename_device: calling speakers.rename_device({device_id})")
+            ok = await asyncio.to_thread(
+                speakers.rename_device, device_id, new_name
+            )
+            logger.info(
+                f"rename_device: speakers.rename_device({device_id}) "
+                f"returned {ok} in {time.monotonic() - t0:.2f}s"
+            )
 
         # 2. Update soundcork's stored DeviceInfo so /marge responses use
         #    the new name on the next request from the speaker.
@@ -295,12 +313,15 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
         if combined_device and combined_device.st_device:
             hostname = combined_device.st_device.Host
-            if combined_device.marge_server == "Soundcork" and addr_is_reachable(
-                hostname
-            ):
-                ok = remove_file_from_speaker(hostname, SPEAKER_OVERRIDE_SDK_LOCATION)
+            reachable = await asyncio.to_thread(addr_is_reachable, hostname)
+            if combined_device.marge_server == "Soundcork" and reachable:
+                ok = await asyncio.to_thread(
+                    remove_file_from_speaker,
+                    hostname,
+                    SPEAKER_OVERRIDE_SDK_LOCATION,
+                )
                 logger.info(f"removed override on {hostname}: success={ok}")
-                reboot_speaker(hostname)
+                await asyncio.to_thread(reboot_speaker, hostname)
                 speakers.clear_device(device_id)
 
         if account_id and datastore.device_exists(account_id, device_id):

@@ -483,25 +483,42 @@ def add_device_to_account(
 def rename_device(
     datastore: "DataStore", account: str, device_id: str, source_xml: str
 ) -> ET.Element:
-
     new_device_elem = ET.fromstring(source_xml)
     # Name is required and should raise an exception if missing
     name = strip_element_text(new_device_elem.find("name"))
     if not name:
         raise RuntimeError("device requires a name")
 
+    macaddress = (
+        strip_element_text(new_device_elem.find("macaddress")) or device_id
+    )
+
     # first see if this device is already defined
     existing_device = datastore.get_device_info(account, device_id)
+    previous_name = existing_device.name
     existing_device.name = name
     updated_device = datastore.save_device_info(existing_device, account)
 
+    # If the stored createdOn is the epoch sentinel (never set when the device
+    # was bootstrapped) the speaker reads that as "marge has no real record for
+    # me" and refuses to commit the rename. Fall back to updated_on so the
+    # response always advertises a real-looking timestamp.
+    created_on = updated_device.created_on
+    if not created_on or created_on == DEFAULT_DATESTR:
+        created_on = updated_device.updated_on
+
     return_elem = ET.Element("device")
     return_elem.attrib["deviceid"] = updated_device.device_id
-    ET.SubElement(return_elem, "createdOn").text = updated_device.created_on
+    ET.SubElement(return_elem, "createdOn").text = created_on
     ET.SubElement(return_elem, "ipaddress").text = updated_device.ip_address
+    ET.SubElement(return_elem, "macaddress").text = macaddress
     ET.SubElement(return_elem, "name").text = updated_device.name
     ET.SubElement(return_elem, "updatedOn").text = updated_device.updated_on
 
+    logger.info(
+        f"marge rename callback for {device_id}: "
+        f"{previous_name!r} -> {name!r}"
+    )
     return return_elem
 
 
