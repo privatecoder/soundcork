@@ -9,7 +9,7 @@ version = "0.0.2"
 description = "A replacement server for Bose SoundTouch devices."
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE.md"]
+license-files = ["LICENSE"]
 
 authors = [{ name = "Deborah Kaplan" }, { name = "Allen Petersen" }]
 maintainers = [{ name = "Deborah Kaplan" }, { name = "Allen Petersen" }]
@@ -21,8 +21,22 @@ dynamic = ["dependencies"]
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
 
-[tool.setuptools.packages]
-find = {}
+[tool.setuptools]
+include-package-data = false
+packages = ["soundcork", "soundcork.ui"]
+
+[tool.setuptools.package-data]
+soundcork = [
+    ".env.shared",
+    "media/*",
+    "resources/*",
+    "static/css/*",
+    "static/images/*",
+    "static/resources/*",
+    "swupdate.xml",
+    "templates/*.html",
+    "templates/admin/*.html",
+]
 
 [tool.black]
 

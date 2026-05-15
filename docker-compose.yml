@@ -11,6 +11,10 @@ services:
       - DATA_DIR=/soundcork/data
       # Log all 404/unhandled requests to this directory (for debugging)
       - UNHANDLED_LOG_DIR=/soundcork/logs/traffic
+      # Optional Spotify OAuth integration
+      # - SPOTIFY_CLIENT_ID=your-client-id
+      # - SPOTIFY_CLIENT_SECRET=your-client-secret
+      # - SPOTIFY_REDIRECT_URI=http://192.168.1.50:8001/mgmt/spotify/callback
       # Set DEV_MODE=true to run in development mode with hot reload and detailed logging
       - DEV_MODE=${DEV_MODE:-false}
     volumes:

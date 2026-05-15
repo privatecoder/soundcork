@@ -10,8 +10,8 @@ A self-hosted replacement for the Bose SoundTouch cloud, so your speakers keep w
 
 - **Presets keep playing** — TuneIn / internet radio / your custom streams
 - **The original Bose SoundTouch app still works** for basic playback (it talks to the speaker over its local port, not to the cloud)
-- **A built-in web UI (`/miniapp`)** lets you start/stop, switch sources, manage presets, and change volume from any browser
-- **A web admin (`/admin`)** discovers speakers on your network and walks you through onboarding
+- **A built-in web UI (`/miniapp`)** lets you start/stop, switch sources, manage presets, change volume, and group/ungroup speakers from any browser
+- **A web admin (`/admin`)** discovers speakers on your network, walks you through onboarding, and lets you rename or remove stored speakers/accounts
 
 The change soundcork pushes to the speaker is intentionally minimal and reversible (see "What soundcork changes on your speaker" below).
 
@@ -115,6 +115,7 @@ Run the test suite:
 
 ```bash
 cd ..
+pip install -r requirements-dev.txt
 pytest
 ```
 
@@ -134,6 +135,9 @@ services:
       - BASE_URL=http://192.168.1.50:8001  # ← change to your host's LAN IP
       - DATA_DIR=/soundcork/data
       - UNHANDLED_LOG_DIR=/soundcork/logs/traffic   # optional
+      # - SPOTIFY_CLIENT_ID=your-client-id          # optional
+      # - SPOTIFY_CLIENT_SECRET=your-client-secret  # optional
+      # - SPOTIFY_REDIRECT_URI=http://192.168.1.50:8001/mgmt/spotify/callback
       - DEV_MODE=${DEV_MODE:-false}
     volumes:
       - ./data:/soundcork/data
@@ -316,7 +320,15 @@ rm /mnt/nv/OverrideSdkPrivateCfg.xml
 reboot
 ```
 
-To also undo the USB-stick SSH unlock: there is no clean way; the activation is persistent. The practical mitigation is that the speaker is only listening on your LAN, and removing the override is enough to get it back to factory behaviour.
+If you made shell access persistent with `/mnt/nv/remote_services`, remove that marker and reboot:
+
+```sh
+ssh root@<speaker-ip>
+rm /mnt/nv/remote_services
+reboot
+```
+
+Keep speaker SSH/telnet reachable only from your LAN. Removing the override is the important step for reverting soundcork behavior; removing the `remote_services` marker only affects whether shell access remains available after reboot.
 
 ---
 

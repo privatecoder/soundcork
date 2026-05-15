@@ -1,247 +1,149 @@
 # Deployment Guide
 
-Four ways to run SoundCork, from simplest to most customizable.
+This guide covers production and development deployments. For first-time speaker
+setup, including the USB `remote_services` process, start with the main
+[README](../README.md).
 
-## ⚠️ Critical: `BASE_URL` must be reachable from your speakers
+## Required Configuration
 
-`BASE_URL` is the URL that **your Bose speakers** use to talk to soundcork. The speakers receive this URL during configuration and use it for every API call (Marge, BMX registry, source token authentication, etc.).
+`BASE_URL` is the most important setting. It is the URL your speakers receive in
+`OverrideSdkPrivateCfg.xml` and later use for Marge, BMX, update, and stats
+requests.
 
-If the speakers cannot resolve or reach the URL, sources like **TUNEIN, INTERNET_RADIO, and LOCAL_INTERNET_RADIO will silently fail to activate** at boot. The symptom is `UNKNOWN_SOURCE_ERROR` (code 1005) when trying to play a preset — even though the source is correctly listed in the device's `Sources.xml`.
+Use a value reachable from the speakers:
 
-**Do not use:**
+- `http://192.168.1.50:8001` when using the default Docker Compose nginx sidecar
+- `http://192.168.1.50:8000` when running Soundcork directly
+- `http://soundcork.lan:8001` if that name resolves on the speaker network
 
-- `http://localhost:8000` or `http://127.0.0.1:8000` — speakers cannot reach loopback addresses on the host
-- `http://soundcork:8000` or any container name — speakers are not part of your Docker network
-- A hostname that only resolves inside Kubernetes / Docker
+Do not use:
 
-**Use one of:**
+- `localhost`, `127.0.0.1`, or `0.0.0.0`
+- Docker service names such as `soundcork`
+- Kubernetes-only DNS names unless the speakers can resolve and reach them
 
-- The host's **LAN IP address**: `http://192.168.1.50:8000`
-- A **DNS name resolvable on the speaker network**: `http://soundcork.lan:8000`
-- A **publicly routable** hostname behind your reverse proxy: `https://soundcork.example.com`
+After changing `BASE_URL`, run **Switch to Soundcork** again for each speaker so
+the speaker receives a new override file.
 
-After changing `BASE_URL`, you must **re-run "Switch to Soundcork"** in the admin UI for each speaker (this rewrites `OverrideSdkPrivateCfg.xml` on the speaker and reboots it). The admin page (`/admin`) shows a warning when `BASE_URL` looks misconfigured for your detected devices.
+## Environment Variables
 
-## Option 1: Docker (Simplest)
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `BASE_URL` | Yes | empty | Device-reachable URL for this service. |
+| `DATA_DIR` | No | `./data` | File-backed account, preset, source, device, group, and Spotify data. |
+| `UNHANDLED_LOG_DIR` | No | empty | Enables raw 404 logging under `unhandled_raw/`. |
+| `SPOTIFY_CLIENT_ID` | No | empty | Enables Spotify account linking when paired with the secret. |
+| `SPOTIFY_CLIENT_SECRET` | No | empty | Spotify OAuth client secret. |
+| `SPOTIFY_REDIRECT_URI` | No | empty | Optional explicit Spotify redirect URI. Browser flow normally derives it from `BASE_URL`. |
+| `DEV_MODE` | Docker only | `false` | Runs `fastapi dev` instead of gunicorn in the container. |
 
-```bash
-docker run -d --name soundcork \
-  --network host \
-  -v /path/to/your/data:/soundcork/data \
-  -e BASE_URL=http://192.168.1.50:8000 \
-  -e DATA_DIR=/soundcork/data \
-  ghcr.io/deborahgu/soundcork:main
-```
+## Docker Compose
 
-> Replace `192.168.1.50` with your host's LAN IP — the address your speakers can reach. Host networking is recommended because UPnP discovery and SoundTouch callbacks need LAN visibility.
-
-## Option 2: Docker Compose
-
-Create a `docker-compose.yml`:
-
-```yaml
-services:
-  soundcork:
-    image: ghcr.io/deborahgu/soundcork:main
-    network_mode: host
-    environment:
-      # Must be reachable from your speakers - use your host's LAN IP, not localhost
-      - BASE_URL=http://192.168.1.50:8000
-      - DATA_DIR=/soundcork/data
-      # Optional: log 404/unhandled requests for debugging
-      - UNHANDLED_LOG_DIR=/soundcork/logs/traffic
-    volumes:
-      - ./data:/soundcork/data
-      - ./logs:/soundcork/logs
-    restart: unless-stopped
-```
-
-Then run:
+The checked-in `docker-compose.yml` uses host networking so UPnP discovery can
+see SoundTouch devices on the LAN. It also runs an nginx sidecar on port `8001`
+to normalize ETag header casing for Bose clients.
 
 ```bash
+# edit BASE_URL first
 docker compose up -d
+docker compose logs -f
 ```
 
-## Option 3: Kubernetes
+Use:
 
-Customize the hostname, volume paths, and ingress controller for your environment.
+- `http://<host-lan-ip>:8001` for `/admin`, `/miniapp`, and `BASE_URL` when the
+  nginx sidecar is enabled.
+- `http://<host-lan-ip>:8000` only when bypassing/removing nginx.
 
-### Namespace
-
-```yaml
-# namespace.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: soundcork
-```
-
-### Deployment
-
-```yaml
-# deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: soundcork
-  namespace: soundcork
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: soundcork
-  template:
-    metadata:
-      labels:
-        app: soundcork
-    spec:
-      containers:
-        - name: soundcork
-          image: ghcr.io/deborahgu/soundcork:main
-          ports:
-            - containerPort: 8000
-          env:
-            # BASE_URL must be reachable from your speakers (not from inside the cluster)
-            - name: BASE_URL
-              value: "https://soundcork.example.com"
-            - name: DATA_DIR
-              value: "/soundcork/data"
-            # Optional: log 404/unhandled requests for debugging
-            - name: UNHANDLED_LOG_DIR
-              value: "/soundcork/logs/traffic"
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 256Mi
-          volumeMounts:
-            - name: data
-              mountPath: /soundcork/data
-            - name: logs
-              mountPath: /soundcork/logs
-      volumes:
-        - name: data
-          hostPath:
-            path: /srv/soundcork/data
-            type: DirectoryOrCreate
-        - name: logs
-          hostPath:
-            path: /srv/soundcork/logs
-            type: DirectoryOrCreate
-```
-
-> **Note:** This example uses `hostPath` volumes. Adapt the volume type for your cluster (e.g., `persistentVolumeClaim`, NFS, or a CSI driver).
-
-### Service
-
-```yaml
-# service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: soundcork
-  namespace: soundcork
-spec:
-  type: ClusterIP
-  selector:
-    app: soundcork
-  ports:
-    - port: 8000
-      targetPort: 8000
-```
-
-### Ingress
-
-```yaml
-# ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: soundcork
-  namespace: soundcork
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt
-spec:
-  tls:
-    - hosts:
-        - soundcork.example.com
-      secretName: soundcork-tls
-  rules:
-    - host: soundcork.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: soundcork
-                port:
-                  number: 8000
-```
-
-> **Note:** This setups is for Traefik IngressRoute. Adapt the ingress for your controller (nginx, Traefik, etc.).
-
-### Apply
+## Docker Development Mode
 
 ```bash
-kubectl apply -f namespace.yaml
-kubectl apply -f deployment.yaml
-kubectl apply -f service.yaml
-kubectl apply -f ingress.yaml
+DEV_MODE=true docker compose up --build
 ```
 
-## Option 4: Bare Metal
+For live source edits, add a development-only bind mount:
 
-### Prerequisites
+```yaml
+volumes:
+  - ./data:/soundcork/data
+  - ./logs:/soundcork/logs
+  - ./soundcork:/app/soundcork:ro
+```
 
-- Python 3.12
+The container runs from `/app/soundcork`, which matters because templates,
+static files, media, resources, and `swupdate.xml` are loaded relative to the
+working directory.
 
-### Setup
+## Bare Metal
 
 ```bash
-python -m venv venv && source venv/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+
+cd soundcork
+cp .env.shared .env.private
+# set BASE_URL and optionally DATA_DIR
+fastapi run main.py
 ```
 
-### Running
-
-**Development:**
+For development:
 
 ```bash
-fastapi dev soundcork/main.py
+pip install -r requirements-dev.txt
+cd soundcork
+fastapi dev --host 0.0.0.0 main.py
 ```
 
-**Production:**
+Run from the `soundcork/` application directory so relative paths resolve.
 
-```bash
-gunicorn -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 soundcork.main:app
-```
+## Systemd
 
-### Systemd
+Use `soundcork.service.example` as a starting point. Confirm:
 
-A sample unit file is included at `soundcork.service.example`. Copy it to `/etc/systemd/system/soundcork.service`, adjust paths and user, then:
+- `WorkingDirectory` points at the `soundcork/` application directory.
+- The command uses the virtualenv gunicorn.
+- Environment values include at least `BASE_URL` and any non-default `DATA_DIR`.
+- The process user can read/write `DATA_DIR` and log paths.
+
+Reload after edits:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now soundcork
 ```
 
-> **Note:** Make sure `PYTHONPATH` includes the project root and that the working directory is set correctly in your service file or shell environment.
+## Kubernetes and Reverse Proxies
 
-## Container Image
+Kubernetes can host Soundcork, but it is usually not the easiest deployment
+model because speakers must reach `BASE_URL` and UPnP discovery depends on LAN
+multicast. If using Kubernetes:
 
-- **Image:** `ghcr.io/deborahgu/soundcork:main`
-- **Multi-architecture:** `linux/amd64` + `linux/arm64` (works on Raspberry Pi)
-- Built automatically via GitHub Actions on every push to main
-- Source: see `.github/workflows/docker-publish.yml`
+- ensure ingress or load balancer addresses are reachable from the speaker LAN
+- set `BASE_URL` to that reachable address, not an internal service name
+- use persistent storage for `DATA_DIR`
+- expect automatic discovery to be unreliable unless the pod has host-network
+  access to the speaker LAN
 
-## Verifying It Works
+If placing Soundcork behind a reverse proxy, keep speaker-facing Bose protocol
+URLs unauthenticated and add authentication only around human UI routes if the
+proxy can separate them safely. See [SECURITY.md](../SECURITY.md).
+
+## Verification
+
+After startup:
 
 ```bash
-curl http://your-server:8000/
-# Expected: {"Bose":"Can't Brick Us"}
+curl -I http://<host>:8001/admin/
+curl -I http://<host>:8001/bmx/registry/v1/services
 ```
 
-After redirecting your speaker (see [Speaker Setup](speaker-setup.md)), you should see incoming requests in the server logs.
+Then open `/admin/`. If speakers are not listed:
+
+- confirm Docker host networking or equivalent LAN access
+- use the admin Refresh button to force discovery
+- check logs for discovery and reachability messages
+- confirm speakers and Soundcork are on the same LAN/VLAN
+
+If a configured speaker shows `UNKNOWN_SOURCE_ERROR`, verify `BASE_URL` from the
+speaker's point of view and rerun **Switch to Soundcork**.

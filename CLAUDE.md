@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-soundcork is a FastAPI-based replacement server for Bose SoundTouch devices. It intercepts API calls that would normally go to Bose's servers (which are shutting down in February 2026) and serves them locally. The project reverse-engineers the Bose SoundTouch API to allow users to continue using full speaker functionality after Bose shuts down their cloud services.
+soundcork is a FastAPI-based replacement server for Bose SoundTouch devices. It intercepts API calls that would normally go to Bose's servers, whose SoundTouch cloud support ended on May 6, 2026, and serves them locally. The project reverse-engineers the Bose SoundTouch API to allow users to continue using speaker functionality without Bose cloud services.
 
 **Tech Stack:** Python 3.12+, FastAPI, Pydantic, pytest, mypy, black, isort
 
@@ -19,25 +19,29 @@ soundcork is a FastAPI-based replacement server for Bose SoundTouch devices. It 
 2. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
+   pip install -r requirements-dev.txt  # needed for tests, linting, and typing
    ```
 
 3. **Configuration:**
    - Copy `soundcork/.env.shared` to `soundcork/.env.private` (or create it)
    - Set `BASE_URL` and `DATA_DIR` in `.env.private`
+   - Optional settings: `UNHANDLED_LOG_DIR`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`
    - Files can use either `.env.shared` or `.env.private` (private takes precedence)
 
 ## Common Commands
 
 **Run development server:**
 ```bash
-fastapi dev soundcork/main.py
+cd soundcork
+fastapi dev --host 0.0.0.0 main.py
 # Server runs on http://127.0.0.1:8000
 # API docs available at http://127.0.0.1:8000/docs
 ```
 
 **Run production server:**
 ```bash
-fastapi run soundcork/main.py
+cd soundcork
+fastapi run main.py
 ```
 
 **Run tests:**
@@ -132,8 +136,8 @@ pip install dist/*.whl
 **Settings (config.py)** — Pydantic settings loaded from `.env.shared` / `.env.private`:
 - `BASE_URL` — URL where soundcork is accessible from the speakers
 - `DATA_DIR` — Local directory for storing account/device data
-- `spotify_client_id`, `spotify_client_secret`, `spotify_redirect_uri` — Optional Spotify OAuth
-- `unhandled_log_dir` — Optional 404 logging directory for debugging
+- `UNHANDLED_LOG_DIR` — Optional directory for raw 404/unhandled request captures
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI` — Optional Spotify OAuth integration
 
 ## Testing
 

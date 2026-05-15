@@ -16,6 +16,17 @@ User=${USER}
 # WorkingDirectory will probably be something like .../soundcork/soundcork
 WorkingDirectory=${INSTALL_DIR}/soundcork
 
+# Required: URL speakers use to reach soundcork. Use a LAN IP/hostname, not localhost.
+Environment=BASE_URL=http://192.168.1.50:8000
+
+# Optional runtime settings. Prefer an EnvironmentFile for real deployments.
+# Environment=DATA_DIR=/var/lib/soundcork
+# Environment=UNHANDLED_LOG_DIR=/var/log/soundcork/traffic
+# Environment=SPOTIFY_CLIENT_ID=your-client-id
+# Environment=SPOTIFY_CLIENT_SECRET=your-client-secret
+# Environment=SPOTIFY_REDIRECT_URI=http://192.168.1.50:8000/mgmt/spotify/callback
+# EnvironmentFile=-/etc/soundcork/soundcork.env
+
 # ditto on ${INSTALL_DIR}, though this time the resulting file should be
 # more like .../soundcork/.venv/bin/gunicorn
 # replace 0.0.0.0:8000 with 127.0.0.1:8000 if you are running behind

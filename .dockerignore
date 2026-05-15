@@ -1,7 +1,41 @@
 .git
-.venv
-__pycache__
-*.pyc
-.env.private
-docs/
+.github/
+.claude/
+.codex-skill-staging/
 .opencode/
+
+.env
+.env.private
+
+.venv/
+env/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Local datastore/log state can contain device IDs, account IDs, and tokens.
+data/
+logs/
+soundcork/data/
+soundcork/logs/
+
+# Test and developer-only files are not needed in the production image.
+soundcork/tests/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Build artifacts and editor/OS noise.
+build/
+dist/
+*.egg-info/
+.DS_Store
+.vscode/
+.idea/
+
+docs/
