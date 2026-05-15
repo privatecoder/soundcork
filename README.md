@@ -2,7 +2,7 @@
 
 A self-hosted replacement for the Bose SoundTouch cloud, so your speakers keep working now that Bose cloud support has ended.
 
-This repository is a heavily modified fork of the original Soundcork project, focused on keeping Bose SoundTouch devices usable after the official Bose cloud API shutdown.
+**This repository is a heavily modified fork of the original Soundcork project, focused on keeping Bose SoundTouch devices usable after the official Bose cloud API shutdown.**
 
 ## What this is
 
