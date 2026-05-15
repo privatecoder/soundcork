@@ -521,6 +521,23 @@
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) pollStatus();
         });
+
+        // Cold-start grace: Zeroconf discovery runs for 5s at app boot but
+        // late mDNS replies trickle in afterward. If the dashboard renders
+        // with every speaker still offline, the dict is probably mid-warm-up —
+        // reload once after a short delay so the populated state can be picked
+        // up without the user having to hit refresh manually.
+        (function () {
+            const all = document.querySelectorAll('.device-card');
+            const online = document.querySelectorAll('.device-card.device-online');
+            if (all.length === 0 || online.length > 0) return;
+            const RETRY_KEY = 'sc_cold_start_retry_ts';
+            const COOLDOWN_MS = 30_000;
+            const last = parseInt(sessionStorage.getItem(RETRY_KEY) || '0', 10);
+            if (Date.now() - last < COOLDOWN_MS) return;
+            sessionStorage.setItem(RETRY_KEY, Date.now().toString());
+            setTimeout(() => window.location.reload(), 6000);
+        })();
     </script>
 </body>
 </html>
