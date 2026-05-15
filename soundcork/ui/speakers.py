@@ -1,6 +1,8 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
+from bosesoundtouchapi.models import Zone, ZoneMember  # type: ignore
 from bosesoundtouchapi.soundtouchclient import (  # type: ignore
     ContentItem as BCContentItem,
     SoundTouchClient,
@@ -394,6 +396,184 @@ class Speakers:
         except Exception as e:
             logger.error(f"Error getting now-playing on device {device_id}: {e}")
             return None
+
+    def get_zone(self, device_id: str) -> dict | None:
+        """Get the device's current multi-room zone state.
+
+        Returns a dict with `master_device_id`, `is_master` and a `members`
+        list (each `{device_id, ip, role}`), or `None` if the device is
+        solo / unreachable. A solo device returns None even though
+        GetZoneStatus may succeed — we treat "empty zone" as "not in a zone".
+        """
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return None
+        try:
+            client = SoundTouchClient(cd.st_device)
+            zone = client.GetZoneStatus()
+        except Exception as e:
+            logger.debug(f"Error getting zone for {device_id}: {e}")
+            return None
+
+        master_id = getattr(zone, "MasterDeviceId", None) or ""
+        if not master_id:
+            return None  # not in a zone
+        members = []
+        for m in getattr(zone, "Members", None) or []:
+            members.append(
+                {
+                    "device_id": getattr(m, "DeviceId", "") or "",
+                    "ip": getattr(m, "IpAddress", "") or "",
+                    "role": getattr(m, "DeviceRole", "") or "",
+                }
+            )
+        return {
+            "master_device_id": master_id,
+            "is_master": bool(getattr(zone, "IsZoneMaster", False)),
+            "members": members,
+        }
+
+    def get_all_zones(self, device_ids: list[str]) -> dict[str, dict]:
+        """Query zone state for many devices in parallel.
+
+        Returns `{device_id: zone_dict}` only for devices that ARE in a zone;
+        solo devices are omitted. Slow devices are dropped at ~3s.
+        """
+        if not device_ids:
+            return {}
+        result: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=min(8, len(device_ids))) as pool:
+            futures = {pool.submit(self.get_zone, did): did for did in device_ids}
+            for fut, did in futures.items():
+                try:
+                    z = fut.result(timeout=3)
+                except Exception:
+                    z = None
+                if z:
+                    result[did] = z
+        return result
+
+    def group_toggle(self, primary_id: str, other_id: str) -> bool:
+        """Make `primary` and `other` share a zone, or undo if already shared.
+
+        - If `other` already shares `primary`'s zone, `other` is removed from it.
+        - Otherwise `other` is added to `primary`'s zone (creating one with
+          `primary` as master if needed). If `other` was in a different zone,
+          it's removed from that one first.
+        """
+        if primary_id == other_id:
+            return False
+        primary = self.all_devices().get(primary_id)
+        other = self.all_devices().get(other_id)
+        if not primary or not primary.st_device:
+            return False
+        if not other or not other.st_device:
+            return False
+
+        primary_zone = self.get_zone(primary_id)
+        other_zone = self.get_zone(other_id)
+
+        same_zone = (
+            primary_zone
+            and other_zone
+            and primary_zone["master_device_id"] == other_zone["master_device_id"]
+        )
+        if same_zone:
+            return self._remove_from_zone(other_id, other_zone)
+
+        # If `other` is in a different zone, evict it first.
+        if other_zone:
+            self._remove_from_zone(other_id, other_zone)
+
+        try:
+            if primary_zone:
+                # Add `other` to the existing zone (call the master).
+                master_id = primary_zone["master_device_id"]
+                master = self.all_devices().get(master_id)
+                if not master or not master.st_device:
+                    return False
+                client = SoundTouchClient(master.st_device)
+                client.AddZoneMembers(
+                    [ZoneMember(ipAddress=other.ip, deviceId=other_id)]
+                )
+                logger.info(
+                    f"Added device {other_id} to zone mastered by {master_id}"
+                )
+            else:
+                # Create a new zone with `primary` as master, `other` as slave.
+                client = SoundTouchClient(primary.st_device)
+                client.CreateZoneFromDevices(primary.st_device, [other.st_device])
+                logger.info(
+                    f"Created new zone: master={primary_id}, slave={other_id}"
+                )
+            return True
+        except Exception as e:
+            logger.error(f"group_toggle failed for {primary_id}+{other_id}: {e}")
+            return False
+
+    def _remove_from_zone(self, device_id: str, zone: dict | None = None) -> bool:
+        """Remove `device_id` from its current multi-room zone."""
+        if zone is None:
+            zone = self.get_zone(device_id)
+        if not zone:
+            return True  # already solo
+
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+
+        try:
+            if zone["is_master"]:
+                # Removing the master tears down the zone — pull every slave.
+                client = SoundTouchClient(cd.st_device)
+                members = [
+                    ZoneMember(ipAddress=m["ip"], deviceId=m["device_id"])
+                    for m in zone["members"]
+                    if m["device_id"] and m["device_id"] != device_id
+                ]
+                if members:
+                    client.RemoveZoneMembers(members)
+                logger.info(f"Disbanded zone mastered by {device_id}")
+                return True
+
+            # Slave — ask the master to remove it.
+            master_id = zone["master_device_id"]
+            master = self.all_devices().get(master_id)
+            if not master or not master.st_device:
+                return False
+            client = SoundTouchClient(master.st_device)
+            client.RemoveZoneMembers(
+                [ZoneMember(ipAddress=cd.ip, deviceId=device_id)]
+            )
+            logger.info(f"Removed device {device_id} from zone {master_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Could not remove {device_id} from zone: {e}")
+            return False
+
+    def ungroup_device(self, device_id: str) -> bool:
+        """Public wrapper — used by the dashboard's per-card "Leave group" button."""
+        return self._remove_from_zone(device_id)
+
+    def rename_device(self, device_id: str, new_name: str) -> bool:
+        """Push a new friendly name to the speaker via the SoundTouch API.
+
+        Updates the speaker's local `/info`, `/getName`, and UPnP
+        `friendlyName` in one call. Caller is still responsible for
+        updating soundcork's stored DeviceInfo.xml so that subsequent
+        Marge responses match.
+        """
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            client.SetName(new_name)
+            logger.info(f"Renamed device {device_id} to {new_name!r}")
+            return True
+        except Exception as e:
+            logger.error(f"SetName failed on {device_id}: {e}")
+            return False
 
     def media_play(self, device_id: str) -> bool:
         """Resume playback on the device's current source (AVRCP/UPnP play)."""

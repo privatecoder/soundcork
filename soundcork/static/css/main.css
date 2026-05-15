@@ -780,6 +780,113 @@ main {
     color: var(--color-primary);
 }
 
+/* Multi-room group panel — inline under each device card */
+.device-group {
+    margin-top: calc(-1 * var(--spacing-xs));
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    overflow: hidden;
+}
+
+.device-card-grouped .device-group {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+}
+
+.device-group-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    user-select: none;
+    transition: background var(--transition-fast);
+}
+
+.device-group-summary::-webkit-details-marker { display: none; }
+.device-group-summary::marker { content: ""; }
+
+.device-group-summary::after {
+    content: "▾";
+    float: right;
+    color: var(--color-text-secondary);
+    transition: transform var(--transition-fast);
+}
+
+.device-group[open] .device-group-summary::after {
+    transform: rotate(180deg);
+}
+
+.device-group-summary:hover {
+    background: var(--color-border-light);
+}
+
+.device-card-grouped .device-group-summary:hover {
+    background: rgba(0, 102, 255, 0.08);
+}
+
+.device-group-summary-active {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+.device-group-body {
+    padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.device-card-grouped .device-group-body {
+    border-top-color: rgba(0, 102, 255, 0.25);
+}
+
+.device-group-peers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.group-peer-chip {
+    padding: var(--spacing-xs) var(--spacing-md);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.group-peer-chip:hover {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+}
+
+.group-peer-chip.is-active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+    box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.15);
+}
+
+.group-peer-chip.is-active:hover {
+    background: var(--color-primary-hover);
+}
+
+.device-group-leave {
+    display: flex;
+    justify-content: flex-end;
+}
+
 .device-image {
     width: 4rem;
     height: 4rem;
@@ -1599,13 +1706,15 @@ textarea:focus {
     font-weight: 500;
 }
 
-.account-rename-form {
+.account-rename-form,
+.device-rename-form {
     display: flex;
     gap: var(--spacing-sm);
     align-items: center;
 }
 
-.account-rename-form input {
+.account-rename-form input,
+.device-rename-form input {
     padding: var(--spacing-sm) var(--spacing-md);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
@@ -1617,10 +1726,50 @@ textarea:focus {
     transition: border-color var(--transition-fast);
 }
 
-.account-rename-form input:focus {
+.device-rename-form input {
+    flex: 1;
+    min-width: 0;
+}
+
+.account-rename-form input:focus,
+.device-rename-form input:focus {
     outline: none;
     border-color: var(--color-primary);
     box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.device-rename {
+    margin-top: var(--spacing-sm);
+}
+
+.device-rename-summary {
+    list-style: none;
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    color: var(--color-primary);
+    font-weight: 500;
+    padding: var(--spacing-xs) 0;
+    user-select: none;
+}
+
+.device-rename-summary::-webkit-details-marker { display: none; }
+.device-rename-summary::marker { content: ""; }
+
+.device-rename-summary::after {
+    content: " ▾";
+    color: var(--color-text-secondary);
+}
+
+.device-rename[open] .device-rename-summary::after {
+    content: " ▴";
+}
+
+.device-rename-summary:hover {
+    color: var(--color-primary-hover);
+}
+
+.device-rename[open] .device-rename-form {
+    margin-top: var(--spacing-sm);
 }
 
 .btn-small-primary {
@@ -1735,4 +1884,27 @@ textarea:focus {
     display: flex;
     gap: var(--spacing-sm);
     margin-top: var(--spacing-sm);
+}
+
+.device-reboot-status {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+}
+
+.device-reboot-status .device-reboot-countdown {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.device-reboot-status.is-error {
+    background: var(--color-error-light);
+    color: var(--color-error);
 }

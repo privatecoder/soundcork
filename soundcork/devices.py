@@ -119,6 +119,36 @@ def write_file_to_speaker(payload: BytesIO, host: str, remote_path: str) -> bool
     return True
 
 
+def remove_file_from_speaker(host: str, remote_path: str) -> bool:
+    """SSH to the speaker and delete `remote_path`.
+
+    Used to remove `/mnt/nv/OverrideSdkPrivateCfg.xml` so the speaker
+    falls back to Bose's original SDK config on the next boot.
+    """
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(
+            hostname=host,
+            port=22,
+            username="root",
+            password="",
+            timeout=SSH_TIMEOUT_SECONDS,
+            banner_timeout=SSH_TIMEOUT_SECONDS,
+            auth_timeout=SSH_TIMEOUT_SECONDS,
+        )
+        # rm -f swallows "missing file" so a no-op succeeds.
+        _stdin, stdout, _stderr = ssh.exec_command(f"rm -f {remote_path}")
+        rc = stdout.channel.recv_exit_status()
+        logger.debug(f"rm {remote_path} on {host} exited {rc}")
+        return rc == 0
+    except (OSError, paramiko.SSHException) as e:
+        logger.info(f"error removing {remote_path} on {host}: {e}")
+        return False
+    finally:
+        ssh.close()
+
+
 def reboot_speaker(host: str) -> bool:
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())

@@ -30,7 +30,11 @@
     {% if account.devices %}
     <div class="admin-devices-grid">
         {% for device in account.devices %}
-        <div class="device-card device-{{ device.marge_server|lower }}">
+        <div class="device-card device-{{ device.marge_server|lower }}"
+             data-device-id="{{ device.id }}"
+             data-marge="{{ device.marge_server }}"
+             data-online="{{ 'true' if device.online else 'false' }}"
+             data-in-soundcork="{{ 'true' if device.in_soundcork else 'false' }}">
             <div class="device-info">
                 <div class="device-details">
                     <div class="device-name">{{ device.name }}</div>
@@ -43,6 +47,25 @@
                     </span>
                 </div>
             </div>
+
+            {% if device.in_soundcork and device.online %}
+            <details class="device-rename">
+                <summary class="device-rename-summary">Rename speaker…</summary>
+                <form action="/admin/renameDevice/{{ device.id }}" method="post" class="device-rename-form">
+                    <label for="rename-device-{{ device.id }}" class="sr-only">New name for {{ device.name }}</label>
+                    <input
+                        type="text"
+                        id="rename-device-{{ device.id }}"
+                        name="name"
+                        value="{{ device.name }}"
+                        data-original="{{ device.name }}"
+                        placeholder="Speaker name"
+                        maxlength="64"
+                        required>
+                    <button type="submit" class="btn-primary btn-small-primary">Rename</button>
+                </form>
+            </details>
+            {% endif %}
 
             <div class="admin-device-meta">
                 <div class="meta-row">
@@ -86,10 +109,19 @@
                         <button type="submit" class="btn-primary" style="width: 100%;">Add to Soundcork</button>
                     </form>
                     {% endif %}
-                {% elif device.reachable and device.marge_server != "Soundcork" %}
-                <form action="/admin/switchToSoundcork/{{ device.id }}" method="POST" style="flex: 1;">
-                    <button type="submit" class="btn-primary" style="width: 100%;">Switch to Soundcork</button>
-                </form>
+                {% else %}
+                    {% if device.reachable and device.marge_server != "Soundcork" %}
+                    <form action="/admin/switchToSoundcork/{{ device.id }}" method="POST" style="flex: 1;">
+                        <button type="submit" class="btn-primary" style="width: 100%;">Switch to Soundcork</button>
+                    </form>
+                    {% endif %}
+                    <form
+                        action="/admin/removeDevice/{{ device.id }}"
+                        method="POST"
+                        style="flex: 1;"
+                        onsubmit="return confirm('Remove {{ device.name }} from soundcork? {% if device.marge_server == 'Soundcork' %}The speaker will be rebooted and switched back to Bose servers.{% else %}The device entry in soundcork will be deleted.{% endif %}');">
+                        <button type="submit" class="btn-danger" style="width: 100%;">Remove from Soundcork</button>
+                    </form>
                 {% endif %}
             </div>
         </div>

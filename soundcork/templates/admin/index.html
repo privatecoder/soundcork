@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Soundcork Admin</title>
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
     <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
@@ -99,17 +100,23 @@
             const refreshBtn = document.getElementById('admin-refresh-btn');
 
             function bindRenameForms() {
-                document.querySelectorAll('.account-rename-form').forEach(form => {
-                    const input = form.querySelector('input[name="label"]');
-                    const button = form.querySelector('button[type="submit"]');
-                    if (!input || !button) return;
-                    const sync = () => {
-                        const v = input.value.trim();
-                        button.disabled = (v === '' || v === input.dataset.original);
-                    };
-                    sync();
-                    input.addEventListener('input', sync);
-                });
+                const selectors = [
+                    ['.account-rename-form', 'input[name="label"]'],
+                    ['.device-rename-form',  'input[name="name"]'],
+                ];
+                for (const [formSel, inputSel] of selectors) {
+                    document.querySelectorAll(formSel).forEach(form => {
+                        const input = form.querySelector(inputSel);
+                        const button = form.querySelector('button[type="submit"]');
+                        if (!input || !button) return;
+                        const sync = () => {
+                            const v = input.value.trim();
+                            button.disabled = (v === '' || v === input.dataset.original);
+                        };
+                        sync();
+                        input.addEventListener('input', sync);
+                    });
+                }
             }
 
             function setLoading(loading, opts) {
@@ -159,6 +166,120 @@
             if (refreshBtn) {
                 refreshBtn.addEventListener('click', () => loadDevices(true));
             }
+
+            // Track devices currently in the middle of a reboot so a
+            // mid-flight fragment swap doesn't overwrite their countdown.
+            const REBOOT_DEADLINE_MS = 120 * 1000;
+            const inflightReboots = new Map();   // device_id → finishedPromise
+
+            function cardSelector(deviceId) {
+                return `[data-device-id="${CSS.escape(deviceId)}"]`;
+            }
+
+            function renderRebootBanner(card, secondsLeft) {
+                const actions = card.querySelector('.admin-device-actions');
+                if (!actions) return null;
+                actions.innerHTML = `
+                    <div class="device-reboot-status" role="status" aria-live="polite">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="device-reboot-text">Rebooting speaker… <strong class="device-reboot-countdown">${secondsLeft}</strong>s left</span>
+                    </div>
+                `;
+                return actions.querySelector('.device-reboot-countdown');
+            }
+
+            function renderRebootError(card, msg) {
+                const actions = card.querySelector('.admin-device-actions');
+                if (!actions) return;
+                actions.innerHTML = `
+                    <div class="device-reboot-status is-error" role="alert">
+                        <strong>${msg}</strong>
+                    </div>
+                `;
+            }
+
+            async function waitForDeviceState(deviceId, isDoneFn) {
+                const deadline = Date.now() + REBOOT_DEADLINE_MS;
+                while (Date.now() < deadline) {
+                    await new Promise(r => setTimeout(r, 5000));
+                    try {
+                        const res = await fetch(FRAGMENT_URL, {
+                            credentials: 'same-origin',
+                            headers: { 'Accept': 'text/html' },
+                        });
+                        if (!res.ok) continue;
+                        const html = await res.text();
+                        const tmp = document.createElement('div');
+                        tmp.innerHTML = html;
+                        const newCard = tmp.querySelector(cardSelector(deviceId));
+                        if (isDoneFn(newCard)) {
+                            return html;
+                        }
+                    } catch (err) { /* keep polling */ }
+                }
+                return null;
+            }
+
+            function startCountdown(card, totalSeconds) {
+                const el = renderRebootBanner(card, totalSeconds);
+                let secondsLeft = totalSeconds;
+                const handle = setInterval(() => {
+                    secondsLeft -= 1;
+                    if (el) el.textContent = Math.max(0, secondsLeft);
+                    if (secondsLeft <= 0) clearInterval(handle);
+                }, 1000);
+                return () => clearInterval(handle);
+            }
+
+            async function handleSwitchSubmit(form) {
+                const action = form.getAttribute('action');
+                const deviceId = action.split('/').pop();
+                const card = document.querySelector(cardSelector(deviceId));
+                if (!card) return;
+
+                const stopCountdown = startCountdown(card, 120);
+
+                const finished = (async () => {
+                    try {
+                        await fetch(action, {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            redirect: 'follow',
+                        });
+                    } catch (err) { /* fall through to polling */ }
+
+                    // Done when the device shows up again with marge==Soundcork.
+                    const html = await waitForDeviceState(deviceId, (newCard) =>
+                        newCard && newCard.dataset.marge === 'Soundcork'
+                            && newCard.dataset.online === 'true'
+                    );
+                    stopCountdown();
+
+                    if (html) {
+                        accountsSection.innerHTML = html;
+                        bindRenameForms();
+                    } else {
+                        renderRebootError(
+                            document.querySelector(cardSelector(deviceId)),
+                            "Speaker didn't come back online within 2 minutes. Refresh and check the Bose app."
+                        );
+                    }
+                })();
+
+                inflightReboots.set(deviceId, finished);
+                finished.finally(() => inflightReboots.delete(deviceId));
+            }
+
+            // Intercept Switch-to-Soundcork submits anywhere on the page.
+            document.addEventListener('submit', (e) => {
+                const form = e.target;
+                if (!(form instanceof HTMLFormElement)) return;
+                const action = form.getAttribute('action') || '';
+                if (action.startsWith('/admin/switchToSoundcork/')) {
+                    e.preventDefault();
+                    handleSwitchSubmit(form);
+                }
+            });
 
             // Kick off initial fetch as soon as the page is parsed.
             loadDevices(false);

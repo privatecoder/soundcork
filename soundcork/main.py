@@ -167,6 +167,16 @@ def read_root():
         return RedirectResponse(url="/admin", status_code=303)
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    """Serve the favicon directly so /favicon.ico doesn't fall through to
+    the unhandled-404 handler when a client requests it without reading
+    the <link rel="icon"> hint from the HTML."""
+    return RedirectResponse(
+        url="/static/images/favicon.ico", status_code=HTTPStatus.MOVED_PERMANENTLY
+    )
+
+
 @app.post(
     "/marge/streaming/support/power_on",
     tags=["marge"],

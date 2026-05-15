@@ -12,11 +12,13 @@ from pydantic import BaseModel
 
 from soundcork.config import Settings
 from soundcork.datastore import DataStore
+from soundcork.constants import SPEAKER_OVERRIDE_SDK_LOCATION
 from soundcork.devices import (
     add_device_by_ip,
     addr_is_reachable,
     override_speaker_config,
     reboot_speaker,
+    remove_file_from_speaker,
 )
 from soundcork.ui.speakers import CombinedDevice, Speakers
 
@@ -218,32 +220,10 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                 reboot = reboot_speaker(hostname)
                 logger.info(f"reboot {hostname} result {reboot}")
                 speakers.clear_device(device_id)
-        return RedirectResponse(
-            url=f"/admin/wait/{device_id}/0", status_code=HTTPStatus.FOUND
-        )
-
-    @router.get("/admin/wait/{device_id}/{elapsed}")
-    async def wait_switch_device(request: Request, device_id: str, elapsed: int):
-        logger.debug(f"checking for restart for {{device_id}}")
-        # only wait up to 120 seconds
-        if elapsed >= 120:
-            return templates.TemplateResponse(
-                request=request,
-                name="admin/wait.html",
-                context={"elapsed": elapsed, "device_id": device_id, "timed_out": True},
-            )
-
-        combined_device = speakers.all_devices().get(device_id)
-        if combined_device:
-            st_device = combined_device.st_device
-            if st_device:
-                return RedirectResponse(url=f"/admin/", status_code=HTTPStatus.FOUND)
-
-        return templates.TemplateResponse(
-            request=request,
-            name="admin/wait.html",
-            context={"elapsed": elapsed, "device_id": device_id, "timed_out": False},
-        )
+        # The client-side polls /admin/devices-fragment until the device
+        # comes back with marge_server == "Soundcork". No standalone wait
+        # page anymore.
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     @router.post("/admin/addDevice/{device_id}")
     async def add_device_to_soundcork(device_id: str):
@@ -257,6 +237,83 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                 logger.info(f"added account from {hostname} success = {success}")
 
         return RedirectResponse(url=f"/admin/", status_code=HTTPStatus.FOUND)
+
+    @router.post("/admin/renameDevice/{device_id}")
+    async def rename_device(device_id: str, request: Request):
+        """Rename a SoundTouch speaker — pushes to both the speaker firmware
+        and soundcork's stored DeviceInfo.xml."""
+        form_data = await request.form()
+        new_name_raw = form_data.get("name", "")
+        new_name = str(new_name_raw).strip() if isinstance(new_name_raw, str) else ""
+        if not new_name:
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+        combined_device = speakers.all_devices().get(device_id)
+        if not combined_device:
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+        # 1. Push the new name to the speaker (if online). The speaker
+        #    will start advertising it on its UPnP friendlyName and /info
+        #    immediately.
+        if combined_device.online and combined_device.st_device:
+            speakers.rename_device(device_id, new_name)
+
+        # 2. Update soundcork's stored DeviceInfo so /marge responses use
+        #    the new name on the next request from the speaker.
+        account_id = combined_device.account
+        if account_id and datastore.device_exists(account_id, device_id):
+            try:
+                device_info = datastore.get_device_info(account_id, device_id)
+                device_info.name = new_name
+                datastore.save_device_info(device_info, account_id)
+                logger.info(
+                    f"renamed device {device_id} in account {account_id} to {new_name!r}"
+                )
+            except Exception as e:
+                logger.error(f"datastore save_device_info failed: {e}")
+
+        # 3. Force a fresh probe so the cached DeviceName picks up the change.
+        speakers.clear_device(device_id)
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+    @router.post("/admin/removeDevice/{device_id}")
+    async def remove_device(device_id: str):
+        """Remove a device from soundcork.
+
+        Two-step cleanup, both best-effort:
+        1. If the device is reachable AND currently using soundcork as its
+           Marge server, SSH to it and delete the OverrideSdkPrivateCfg.xml
+           override so it falls back to Bose's firmware config, then reboot.
+        2. Delete the device entry from soundcork's datastore.
+
+        If the device is offline or unreachable, only step 2 happens — the
+        user is responsible for clearing the override manually.
+        """
+        logger.info(f"remove device {device_id} from soundcork")
+        combined_device = speakers.all_devices().get(device_id)
+        account_id = combined_device.account if combined_device else ""
+
+        if combined_device and combined_device.st_device:
+            hostname = combined_device.st_device.Host
+            if (
+                combined_device.marge_server == "Soundcork"
+                and addr_is_reachable(hostname)
+            ):
+                ok = remove_file_from_speaker(hostname, SPEAKER_OVERRIDE_SDK_LOCATION)
+                logger.info(
+                    f"removed override on {hostname}: success={ok}"
+                )
+                reboot_speaker(hostname)
+                speakers.clear_device(device_id)
+
+        if account_id and datastore.device_exists(account_id, device_id):
+            try:
+                datastore.remove_device(account_id, device_id)
+                logger.info(f"deleted device {device_id} from account {account_id}")
+            except Exception as e:
+                logger.error(f"datastore remove_device failed: {e}")
+
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     @router.post("/admin/renameAccount/{account_id}")
     async def rename_account(account_id: str, request: Request):

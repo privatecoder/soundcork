@@ -75,6 +75,9 @@ class FakeSpeakers:
     def get_now_playing(self, device_id: str):
         return None
 
+    def get_all_zones(self, device_ids):
+        return {}
+
 
 class FakeTemplates:
     def __init__(self, directory: str) -> None:

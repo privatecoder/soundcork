@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Soundcork Dashboard</title>
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
     <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
@@ -239,7 +240,7 @@
                     {% if devices %}
                     <ul class="devices-grid">
                         {% for device in devices %}
-                        <li class="device-card device-{{ device.status }}{% if device.device_id == selected_device_id %} device-card-selected{% endif %}">
+                        <li class="device-card device-{{ device.status }}{% if device.device_id == selected_device_id %} device-card-selected{% endif %}{% if device.zone %} device-card-grouped{% endif %}">
                             <form action="/miniapp/select-device" method="post" style="display:contents;">
                                 <input type="hidden" name="device_id" value="{{ device.device_id }}">
                                 <input type="hidden" name="device_name" value="{{ device.name }}">
@@ -269,6 +270,53 @@
                                     </div>
                                 </button>
                             </form>
+                            {% if device.status == 'online' %}
+                                {% set other_online = [] %}
+                                {% for other in devices if other.device_id != device.device_id and other.status == 'online' %}
+                                    {% set _ = other_online.append(other) %}
+                                {% endfor %}
+                                {% if other_online or device.zone %}
+                                <details class="device-group">
+                                    <summary class="device-group-summary">
+                                        {% if device.zone %}
+                                        <span class="device-group-summary-active">
+                                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                                            </svg>
+                                            Grouped with {{ device.zone.peer_names|join(', ') }}
+                                        </span>
+                                        {% else %}
+                                        <span class="device-group-summary-idle">Group with…</span>
+                                        {% endif %}
+                                    </summary>
+                                    <div class="device-group-body">
+                                        {% if other_online %}
+                                        <div class="device-group-peers">
+                                            {% for other in other_online %}
+                                            {% set in_same_zone = device.zone and other.device_id in device.zone.peer_ids %}
+                                            <form action="/miniapp/group-toggle" method="post" style="display:contents;">
+                                                <input type="hidden" name="device_id" value="{{ device.device_id }}">
+                                                <input type="hidden" name="other_id" value="{{ other.device_id }}">
+                                                <button type="submit"
+                                                    class="group-peer-chip{% if in_same_zone %} is-active{% endif %}"
+                                                    title="{% if in_same_zone %}Remove {{ other.name }} from the group{% else %}Group with {{ other.name }}{% endif %}">
+                                                    {{ other.name }}
+                                                </button>
+                                            </form>
+                                            {% endfor %}
+                                        </div>
+                                        {% endif %}
+                                        {% if device.zone %}
+                                        <form action="/miniapp/group-leave" method="post" class="device-group-leave">
+                                            <input type="hidden" name="device_id" value="{{ device.device_id }}">
+                                            <button type="submit" class="btn-small btn-danger">Leave group</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </details>
+                                {% endif %}
+                            {% endif %}
                         </li>
                         {% endfor %}
                     </ul>
