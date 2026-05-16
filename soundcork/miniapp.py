@@ -326,6 +326,13 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             zone_map = speakers.get_all_zones(online_ids) if online_ids else {}
             id_to_name = {d["device_id"]: d["name"] for d in devices}
 
+            # Prefer the live datastore name over the soundcork_selected_device
+            # cookie, which is stale whenever the device has been renamed
+            # since the user picked it. Cookie remains as a fallback in case
+            # the device is no longer in the account.
+            if selected_device_id and selected_device_id in id_to_name:
+                selected_device = id_to_name[selected_device_id]
+
             # Each speaker's GetZoneStatus is inconsistent: a master usually
             # lists every slave, but a slave often only lists itself (Bose
             # firmware quirk). Union all responses, keyed by master_device_id,
