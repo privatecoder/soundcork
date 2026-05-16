@@ -15,6 +15,10 @@ A self-hosted replacement for the Bose SoundTouch cloud, so your speakers keep w
 - **A built-in web UI (`/miniapp`)** lets you start/stop, switch sources, manage presets, change volume, and group/ungroup speakers from any browser
 - **A web admin (`/admin`)** discovers speakers on your network, walks you through onboarding, and lets you rename, repair, remove, or reset speakers/accounts
 
+<img width="3064" height="2256" alt="Soundcork-Dashboard-05-16-2026_10_40_AM" src="https://github.com/user-attachments/assets/1597be82-7818-43b8-85e0-a903632d4c0f" />
+
+<img width="3064" height="2256" alt="Soundcork-Admin-05-16-2026_10_38_AM" src="https://github.com/user-attachments/assets/c82a9053-3381-4408-8f66-23cfca4b089f" />
+
 The change soundcork pushes to the speaker is intentionally minimal and reversible (see "What soundcork changes on your speaker" below).
 
 > ⚠️ **Security:** Soundcork has no authentication and exposes admin and SSH-driven endpoints. Run it inside your home network only, behind a router/firewall. See [SECURITY.md](SECURITY.md).
