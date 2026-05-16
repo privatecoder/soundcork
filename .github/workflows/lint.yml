@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  quality_tests:
+  lint:
     runs-on: ubuntu-latest
     strategy:
       matrix:

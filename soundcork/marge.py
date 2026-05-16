@@ -489,9 +489,7 @@ def rename_device(
     if not name:
         raise RuntimeError("device requires a name")
 
-    macaddress = (
-        strip_element_text(new_device_elem.find("macaddress")) or device_id
-    )
+    macaddress = strip_element_text(new_device_elem.find("macaddress")) or device_id
 
     # first see if this device is already defined
     existing_device = datastore.get_device_info(account, device_id)
@@ -515,10 +513,7 @@ def rename_device(
     ET.SubElement(return_elem, "name").text = updated_device.name
     ET.SubElement(return_elem, "updatedOn").text = updated_device.updated_on
 
-    logger.info(
-        f"marge rename callback for {device_id}: "
-        f"{previous_name!r} -> {name!r}"
-    )
+    logger.info(f"marge rename callback for {device_id}: {previous_name!r} -> {name!r}")
     return return_elem
 
 

@@ -188,9 +188,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
         device_ips = [d.ip for d in combined_devices.values() if d.ip]
         configured_accounts = [
-            (aid, accounts[aid].label)
-            for aid in real_accounts
-            if aid in accounts
+            (aid, accounts[aid].label) for aid in real_accounts if aid in accounts
         ]
         return accounts, device_ips, configured_accounts
 
@@ -274,9 +272,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
             candidate = form_account.strip()
             if candidate in real_accounts:
                 return candidate
-            logger.warning(
-                f"unknown account_id={candidate!r} (known: {real_accounts})"
-            )
+            logger.warning(f"unknown account_id={candidate!r} (known: {real_accounts})")
             return None
         if len(real_accounts) == 1:
             return real_accounts[0]
@@ -305,9 +301,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         target_account = _resolve_target_account(
             form_data.get("account_id"), real_accounts
         )
-        success = await asyncio.to_thread(
-            add_device_by_ip, hostname, target_account
-        )
+        success = await asyncio.to_thread(add_device_by_ip, hostname, target_account)
         logger.info(f"add device {device_id} on {hostname} success={success}")
         return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
@@ -372,9 +366,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         if combined_device.online and combined_device.st_device:
             t0 = time.monotonic()
             logger.info(f"rename_device: calling speakers.rename_device({device_id})")
-            ok = await asyncio.to_thread(
-                speakers.rename_device, device_id, new_name
-            )
+            ok = await asyncio.to_thread(speakers.rename_device, device_id, new_name)
             logger.info(
                 f"rename_device: speakers.rename_device({device_id}) "
                 f"returned {ok} in {time.monotonic() - t0:.2f}s"
@@ -432,9 +424,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                         f"failed; keeping datastore row to avoid an orphan "
                         f"state. Retry, or use Reset to Bose."
                     )
-                    return RedirectResponse(
-                        url="/admin/", status_code=HTTPStatus.FOUND
-                    )
+                    return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
                 await asyncio.to_thread(reboot_speaker, hostname)
                 speakers.clear_device(device_id)
 
