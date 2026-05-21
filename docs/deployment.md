@@ -2,7 +2,8 @@
 
 This guide covers production and development deployments. For first-time speaker
 setup, including the USB `remote_services` process, start with the main
-[README](../README.md).
+[README](../README.md). For model-specific USB boot, shell access, recovery, and
+manual stereo-pair notes, see [speaker-setup.md](speaker-setup.md).
 
 ## Required Configuration
 

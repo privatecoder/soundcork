@@ -346,6 +346,7 @@ Keep speaker SSH/telnet reachable only from your LAN. Removing the override is t
 ## Where to learn more
 
 - [docs/deployment.md](docs/deployment.md) — production deployment patterns, Kubernetes, base-URL diagnostics
+- [docs/speaker-setup.md](docs/speaker-setup.md) — model-specific USB boot, shell access, recovery, and manual ST10 stereo-pair notes
 - [docs/API_Spec.md](docs/API_Spec.md) — reverse-engineered Bose API notes
 - [docs/Shutdown_Emulation.md](docs/Shutdown_Emulation.md) — what each Bose endpoint actually does
 - [docs/spotify.md](docs/spotify.md) — Spotify OAuth setup

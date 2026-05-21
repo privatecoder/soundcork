@@ -40,6 +40,9 @@ defaults, but it does not restore Bose cloud features now that the Bose service
 has ended. The admin **Remove from Soundcork** and **Reset to Bose** actions both
 perform this cleanup over SSH when the speaker is reachable.
 
+For the speaker-side USB `remote_services` process, model-specific boot steps,
+and recovery notes, see [speaker-setup.md](speaker-setup.md).
+
 ## Emulated Surfaces
 
 - **Marge (`/marge`)**: account, device, presets, recents, sources, groups,
