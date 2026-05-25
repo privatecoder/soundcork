@@ -475,9 +475,7 @@ class Speakers:
                 client.PowerOn()
             else:
                 client.PowerStandby()
-            logger.info(
-                f"set_power_state {device_id} -> {'on' if on else 'standby'}"
-            )
+            logger.info(f"set_power_state {device_id} -> {'on' if on else 'standby'}")
             return True
         except Exception as e:
             logger.error(

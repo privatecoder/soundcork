@@ -334,9 +334,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             )
             for d in devices:
                 d["power_on"] = power_state_map.get(d["device_id"], False)
-                d["is_st10"] = (d.get("product_code") or "").startswith(
-                    "SoundTouch 10"
-                )
+                d["is_st10"] = (d.get("product_code") or "").startswith("SoundTouch 10")
             id_to_name = {d["device_id"]: d["name"] for d in devices}
 
             # Stereo-pair state. Each ST10 either belongs to a stored Group
@@ -764,8 +762,8 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
     @router.post("/miniapp/stereo-pair")
     async def stereo_pair(request: Request):
         """Stereo-pair two ST10s. Form fields:
-            master_id: device id of the left/master ST10
-            slave_id:  device id of the right ST10
+        master_id: device id of the left/master ST10
+        slave_id:  device id of the right ST10
         """
         try:
             account_id = request.cookies.get("soundcork_account_id", "") or ""
@@ -806,9 +804,8 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             ET.SubElement(right_role, "role").text = "RIGHT"
             ET.SubElement(right_role, "ipAddress").text = slave_info.ip_address
             ET.SubElement(g, "senderIPAddress").text = master_info.ip_address
-            payload_no_id = (
-                '<?xml version="1.0" encoding="UTF-8" ?>'
-                + ET.tostring(g, encoding="unicode")
+            payload_no_id = '<?xml version="1.0" encoding="UTF-8" ?>' + ET.tostring(
+                g, encoding="unicode"
             )
             stored_elem = marge_add_group(datastore, account_id, payload_no_id)
             stored_xml = (
