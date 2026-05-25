@@ -624,10 +624,21 @@ class DataStore:
         if not updated_on:
             updated_on = created_on
 
+        # save_device_info() writes the full "SoundTouch 10 sm2" string into
+        # <type> and doesn't persist <moduleType> at all, so on subsequent
+        # reads `module_type` is "" and naïvely re-concatenating produces a
+        # trailing-space variant ("SoundTouch 10 sm2 ") that misses every
+        # DEVICE_IMAGE_MAP key. Only append moduleType when <type> doesn't
+        # already end with it.
+        if module_type and not type.endswith(f" {module_type}"):
+            product_code = f"{type} {module_type}"
+        else:
+            product_code = type
+
         try:
             return DeviceInfo(
                 device_id=device_id,
-                product_code=f"{type} {module_type}",
+                product_code=product_code,
                 device_serial_number=str(device_serial_number),
                 product_serial_number=str(product_serial_number),
                 firmware_version=str(firmware_version),
@@ -829,7 +840,11 @@ class DataStore:
         )
 
     def device_is_groupable(self, device_info: DeviceInfo) -> bool:
-        return device_info.product_code == "SoundTouch 10"
+        # Stored product_code is "{type} {moduleType}" (e.g. "SoundTouch 10
+        # sm2") when ingested from a speaker's /info; sometimes just
+        # "SoundTouch 10" when read from a hand-edited DeviceInfo.xml. Match
+        # the product-family prefix so both shapes work.
+        return device_info.product_code.startswith("SoundTouch 10")
 
     def add_group(self, account: str, group: Group) -> ET.Element:
         """adds a group

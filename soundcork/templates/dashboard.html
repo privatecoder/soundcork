@@ -260,23 +260,91 @@
                                         <div class="device-name">{{ device.name }}</div>
                                         <div class="device-type">{{ device.product_code }}</div>
                                     </div>
-                                    <div class="device-status-badge" aria-label="Device status: {{ device.status }}">
-                                        <span class="status-dot"></span>
-                                        <span class="status-text">
-                                            {% if device.status == 'online' %}Ready
-                                            {% elif device.status == 'online_bose' %}Using Bose
-                                            {% elif device.status == 'not_discovered' %}Not found
-                                            {% else %}Offline{% endif %}
-                                        </span>
-                                    </div>
                                 </button>
                             </form>
+                            <div class="device-meta">
+                                {% if device.status == 'online' %}
+                                <form action="/miniapp/power" method="post" class="device-power-form">
+                                    <input type="hidden" name="device_id" value="{{ device.device_id }}">
+                                    <input type="hidden" name="state" value="{% if device.power_on %}standby{% else %}on{% endif %}">
+                                    <button type="submit"
+                                        class="btn-power{% if device.power_on %} is-on{% endif %}"
+                                        title="{% if device.power_on %}Put {{ device.name }} into standby{% else %}Power on {{ device.name }}{% endif %}"
+                                        aria-label="{% if device.power_on %}Put {{ device.name }} into standby{% else %}Power on {{ device.name }}{% endif %}"
+                                        aria-pressed="{% if device.power_on %}true{% else %}false{% endif %}">
+                                        <svg class="btn-power-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
+                                            <line x1="12" y1="2" x2="12" y2="12"/>
+                                        </svg>
+                                    </button>
+                                </form>
+                                {% endif %}
+                                {% if device.is_st10 and device.status == 'online' and (device.stereo_pair or device.stereo_pair_candidates) %}
+                                <span
+                                    class="btn-stereo-indicator{% if device.stereo_pair %} is-paired{% endif %}"
+                                    title="{% if device.stereo_pair %}Stereo-paired with {{ device.stereo_pair.partner_name }}{% else %}Can be stereo-paired with another SoundTouch 10{% endif %}"
+                                    aria-label="{% if device.stereo_pair %}Stereo-paired with {{ device.stereo_pair.partner_name }}{% else %}Available for stereo pairing{% endif %}">
+                                    <svg class="btn-stereo-indicator-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                                    </svg>
+                                </span>
+                                {% endif %}
+                                <div class="device-status-badge" aria-label="Device status: {{ device.status }}">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">
+                                        {% if device.status == 'online' %}Ready
+                                        {% elif device.status == 'online_bose' %}Using Bose
+                                        {% elif device.status == 'not_discovered' %}Not found
+                                        {% else %}Offline{% endif %}
+                                    </span>
+                                </div>
+                            </div>
                             {% if device.status == 'online' %}
                                 {% set other_online = [] %}
                                 {% for other in devices if other.device_id != device.device_id and other.status == 'online' %}
                                     {% set _ = other_online.append(other) %}
                                 {% endfor %}
-                                {% if other_online %}
+                                {# Stereo-pair row — only for ST10s. When paired, show the partner
+                                   as an active chip whose × tears down the pair. When unpaired and
+                                   another unpaired ST10 exists, list candidate partners. #}
+                                {% if device.is_st10 and (device.stereo_pair or device.stereo_pair_candidates) %}
+                                <div class="device-stereo-peers">
+                                    <span class="device-stereo-peers-label">Stereo pair:</span>
+                                    {% if device.stereo_pair %}
+                                    <form action="/miniapp/stereo-unpair" method="post" style="display:contents;">
+                                        <input type="hidden" name="group_id" value="{{ device.stereo_pair.group_id }}">
+                                        <button type="submit"
+                                            class="stereo-peer-chip is-active"
+                                            title="Tear down stereo pair ({{ device.stereo_pair.partner_name }})">
+                                            <svg class="group-peer-chip-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path d="M4 4l8 8M12 4l-8 8"/>
+                                            </svg>
+                                            {{ device.stereo_pair.partner_name }}
+                                        </button>
+                                    </form>
+                                    {% else %}
+                                    {% for partner_id, partner_name in device.stereo_pair_candidates %}
+                                    <form action="/miniapp/stereo-pair" method="post" style="display:contents;">
+                                        <input type="hidden" name="master_id" value="{{ device.device_id }}">
+                                        <input type="hidden" name="slave_id" value="{{ partner_id }}">
+                                        <button type="submit"
+                                            class="stereo-peer-chip"
+                                            title="Stereo-pair with {{ partner_name }} ({{ device.name }} = LEFT, {{ partner_name }} = RIGHT)">
+                                            <svg class="group-peer-chip-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path d="M8 3v10M3 8h10"/>
+                                            </svg>
+                                            {{ partner_name }}
+                                        </button>
+                                    </form>
+                                    {% endfor %}
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                                {# Multi-room chip row. Hide it when this device is the slave of an
+                                   active stereo pair, since the firmware funnels multi-room through
+                                   the stereo master only. #}
+                                {% if other_online and not (device.stereo_pair and device.stereo_pair.role == 'RIGHT') %}
                                 <div class="device-group-peers">
                                     {% for other in other_online %}
                                     {% set in_same_zone = device.zone and other.device_id in device.zone.peer_ids %}

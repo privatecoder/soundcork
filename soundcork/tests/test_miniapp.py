@@ -78,6 +78,9 @@ class FakeSpeakers:
     def get_all_zones(self, device_ids):
         return {}
 
+    def get_all_power_states(self, device_ids):
+        return {}
+
 
 def make_client(monkeypatch, speakers: FakeSpeakers | None = None):
     monkeypatch.chdir(Path(__file__).resolve().parents[1])

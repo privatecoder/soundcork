@@ -459,6 +459,59 @@ class Speakers:
                     result[did] = z
         return result
 
+    def set_power_state(self, device_id: str, on: bool) -> bool:
+        """Power a speaker on (wake from standby) or put it into standby.
+
+        PowerOn() reads the current NowPlayingStatus; if source == "STANDBY"
+        it sends the POWER key — so calling it on an already-on speaker is
+        a no-op. PowerStandby() PUTs `/standby` and works regardless.
+        """
+        cd = self.all_devices().get(device_id)
+        if not cd or not cd.st_device:
+            return False
+        try:
+            client = SoundTouchClient(cd.st_device)
+            if on:
+                client.PowerOn()
+            else:
+                client.PowerStandby()
+            logger.info(
+                f"set_power_state {device_id} -> {'on' if on else 'standby'}"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"set_power_state {device_id} -> {'on' if on else 'standby'} "
+                f"failed: {e}"
+            )
+            return False
+
+    def get_all_power_states(self, device_ids: list[str]) -> dict[str, bool]:
+        """Returns `{device_id: is_on}` for the given speakers, in parallel.
+
+        A speaker is "on" when its NowPlayingStatus source is anything other
+        than STANDBY / empty. Slow devices are dropped at ~3s and excluded
+        from the result.
+        """
+        if not device_ids:
+            return {}
+
+        def _check(did: str) -> tuple[str, bool]:
+            np = self.get_now_playing(did)
+            source = ((np or {}).get("source") or "").upper()
+            return did, bool(source) and source != "STANDBY"
+
+        result: dict[str, bool] = {}
+        with ThreadPoolExecutor(max_workers=min(8, len(device_ids))) as pool:
+            futures = {pool.submit(_check, did): did for did in device_ids}
+            for fut, did in futures.items():
+                try:
+                    did_out, is_on = fut.result(timeout=3)
+                    result[did_out] = is_on
+                except Exception:
+                    continue
+        return result
+
     def group_toggle(self, primary_id: str, other_id: str) -> bool:
         """Make `primary` and `other` share a zone, or undo if already shared.
 

@@ -760,12 +760,78 @@ main {
 
 .device-card {
     list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background: var(--color-surface);
     box-shadow: var(--shadow-sm);
     overflow: hidden;
     transition: all var(--transition-base);
+}
+
+.device-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding-right: var(--spacing-lg);
+    flex-shrink: 0;
+}
+
+.device-power-form {
+    margin: 0;
+    display: inline-flex;
+}
+
+.btn-power {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1.5px solid var(--color-border);
+    border-radius: 50%;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform var(--transition-fast),
+                background var(--transition-fast),
+                color var(--transition-fast),
+                border-color var(--transition-fast),
+                box-shadow var(--transition-fast);
+}
+
+.btn-power-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-power.is-on {
+    background: var(--color-success-light);
+    color: var(--color-success);
+    border-color: var(--color-success);
+}
+
+.btn-power:hover {
+    transform: scale(1.08);
+    box-shadow: var(--shadow-sm);
+}
+
+.btn-power:not(.is-on):hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.btn-power.is-on:hover {
+    background: var(--color-success);
+    color: white;
+}
+
+.btn-power:active {
+    transform: scale(0.95);
 }
 
 .device-card.device-online:hover {
@@ -790,19 +856,33 @@ main {
 }
 
 .device-button {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: var(--spacing-lg);
     border: none;
     background: transparent;
     cursor: pointer;
     display: grid;
-    grid-template-columns: 4rem 1fr auto;
+    grid-template-columns: 4rem 1fr;
     gap: var(--spacing-lg);
     align-items: center;
     font-family: inherit;
     color: inherit;
     text-align: left;
     transition: background var(--transition-fast);
+}
+
+.device-button:focus {
+    /* The card already shows selection via its blue border; the browser's
+       default focus outline gets clipped by .device-card's overflow:hidden
+       and shows up as a horizontal bar. Suppress it for mouse focus, but
+       keep a keyboard-visible alternative below. */
+    outline: none;
+}
+
+.device-button:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
 }
 
 .device-button:disabled {
@@ -813,6 +893,7 @@ main {
 /* Multi-room grouping — peer chips live inside the device card, below
    the main device row. Always visible when other speakers are online. */
 .device-group-peers {
+    flex: 1 0 100%;
     display: flex;
     flex-wrap: wrap;
     gap: var(--spacing-xs);
@@ -868,6 +949,85 @@ main {
 }
 
 .group-peer-chip.is-active:hover {
+    background: var(--color-error);
+    border-color: var(--color-error);
+    box-shadow: 0 1px 3px rgba(220, 53, 69, 0.3);
+}
+
+/* Stereo-pair UI — appears only when a device is an ST10 and either
+   currently in a pair or has a candidate ST10 to pair with. */
+.btn-stereo-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--color-border-light);
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+    cursor: default;
+}
+
+.btn-stereo-indicator.is-paired {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+}
+
+.btn-stereo-indicator-icon {
+    width: 14px;
+    height: 14px;
+}
+
+.device-stereo-peers {
+    flex: 1 0 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: 0 var(--spacing-lg) var(--spacing-sm);
+}
+
+.device-stereo-peers-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    font-weight: 500;
+    margin-right: var(--spacing-xs);
+}
+
+.stereo-peer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px 8px 12px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform var(--transition-fast), background var(--transition-fast),
+                border-color var(--transition-fast), color var(--transition-fast),
+                box-shadow var(--transition-fast);
+}
+
+.stereo-peer-chip:hover {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}
+
+.stereo-peer-chip.is-active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+    box-shadow: 0 1px 3px rgba(0, 102, 255, 0.25);
+}
+
+.stereo-peer-chip.is-active:hover {
     background: var(--color-error);
     border-color: var(--color-error);
     box-shadow: 0 1px 3px rgba(220, 53, 69, 0.3);

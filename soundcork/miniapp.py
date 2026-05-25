@@ -2,18 +2,21 @@
 Endpoints for a miniapp UI.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from soundcork.constants import DEFAULT_DATESTR, DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
 from soundcork.datastore import DataStore
+from soundcork.marge import add_group as marge_add_group
 from soundcork.model import Preset as PresetModel
 from soundcork.ui.speakers import Speakers
 
@@ -52,7 +55,9 @@ def decode_cookie_value(value: str | None, default: str | None = None) -> str | 
 
 def get_device_image(product_code: str) -> str:
     """Map product code to device image file."""
-    return DEVICE_IMAGE_MAP.get(product_code.lower(), DEFAULT_DEVICE_IMAGE)
+    return DEVICE_IMAGE_MAP.get(
+        (product_code or "").strip().lower(), DEFAULT_DEVICE_IMAGE
+    )
 
 
 def _read_pending_action(
@@ -324,7 +329,65 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             # Multi-room zone state for every online device (parallel queries).
             online_ids = [d["device_id"] for d in devices if d["status"] == "online"]
             zone_map = speakers.get_all_zones(online_ids) if online_ids else {}
+            power_state_map = (
+                speakers.get_all_power_states(online_ids) if online_ids else {}
+            )
+            for d in devices:
+                d["power_on"] = power_state_map.get(d["device_id"], False)
+                d["is_st10"] = (d.get("product_code") or "").startswith(
+                    "SoundTouch 10"
+                )
             id_to_name = {d["device_id"]: d["name"] for d in devices}
+
+            # Stereo-pair state. Each ST10 either belongs to a stored Group
+            # or is a candidate for a new one. We compute:
+            #   - device.stereo_pair: { group_id, role, partner_id,
+            #     partner_name } when this device is half of an active pair.
+            #   - device.stereo_pair_candidates: list of (id, name) of other
+            #     online unpaired ST10s the user could pair this one with.
+            try:
+                stereo_groups = datastore.list_groups(account_id)
+            except Exception as e:
+                logger.warning(f"list_groups failed: {e}")
+                stereo_groups = []
+            paired_device_ids: set[str] = set()
+            stereo_partner: dict[str, dict[str, str]] = {}
+            for g in stereo_groups:
+                paired_device_ids.add(g.left_id)
+                paired_device_ids.add(g.right_id)
+                stereo_partner[g.left_id] = {
+                    "group_id": g.id,
+                    "role": "LEFT",
+                    "partner_id": g.right_id,
+                    "partner_name": id_to_name.get(g.right_id, g.right_id),
+                }
+                stereo_partner[g.right_id] = {
+                    "group_id": g.id,
+                    "role": "RIGHT",
+                    "partner_id": g.left_id,
+                    "partner_name": id_to_name.get(g.left_id, g.left_id),
+                }
+            unpaired_online_st10s = [
+                d
+                for d in devices
+                if d.get("is_st10")
+                and d["status"] == "online"
+                and d["device_id"] not in paired_device_ids
+            ]
+            for d in devices:
+                d["stereo_pair"] = stereo_partner.get(d["device_id"])
+                if (
+                    d.get("is_st10")
+                    and d["status"] == "online"
+                    and d["device_id"] not in paired_device_ids
+                ):
+                    d["stereo_pair_candidates"] = [
+                        (other["device_id"], other["name"])
+                        for other in unpaired_online_st10s
+                        if other["device_id"] != d["device_id"]
+                    ]
+                else:
+                    d["stereo_pair_candidates"] = []
 
             # Prefer the live datastore name over the soundcork_selected_device
             # cookie, which is stale whenever the device has been renamed
@@ -698,6 +761,134 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             logger.error(f"Error in group-leave: {e}")
         return RedirectResponse(url="/miniapp/dashboard", status_code=303)
 
+    @router.post("/miniapp/stereo-pair")
+    async def stereo_pair(request: Request):
+        """Stereo-pair two ST10s. Form fields:
+            master_id: device id of the left/master ST10
+            slave_id:  device id of the right ST10
+        """
+        try:
+            account_id = request.cookies.get("soundcork_account_id", "") or ""
+            form_data = await request.form()
+            master_id = str(form_data.get("master_id", "")).strip()
+            slave_id = str(form_data.get("slave_id", "")).strip()
+            if not account_id or not master_id or not slave_id:
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            if master_id == slave_id:
+                logger.warning("stereo_pair: master == slave, ignoring")
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+            master_info = datastore.get_device_info(account_id, master_id)
+            slave_info = datastore.get_device_info(account_id, slave_id)
+            if not (
+                datastore.device_is_groupable(master_info)
+                and datastore.device_is_groupable(slave_info)
+            ):
+                logger.warning(
+                    f"stereo_pair: refusing — at least one device is not an ST10"
+                )
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+            # Build the <group> XML and persist via marge.add_group, which
+            # assigns the group_id and writes Group_{id}.xml under the account.
+            import xml.etree.ElementTree as ET  # local import; rarely used
+
+            g = ET.Element("group")
+            ET.SubElement(g, "name").text = f"{master_info.name} + {slave_info.name}"
+            ET.SubElement(g, "masterDeviceId").text = master_id
+            roles = ET.SubElement(g, "roles")
+            left_role = ET.SubElement(roles, "groupRole")
+            ET.SubElement(left_role, "deviceId").text = master_id
+            ET.SubElement(left_role, "role").text = "LEFT"
+            ET.SubElement(left_role, "ipAddress").text = master_info.ip_address
+            right_role = ET.SubElement(roles, "groupRole")
+            ET.SubElement(right_role, "deviceId").text = slave_id
+            ET.SubElement(right_role, "role").text = "RIGHT"
+            ET.SubElement(right_role, "ipAddress").text = slave_info.ip_address
+            ET.SubElement(g, "senderIPAddress").text = master_info.ip_address
+            payload_no_id = (
+                '<?xml version="1.0" encoding="UTF-8" ?>'
+                + ET.tostring(g, encoding="unicode")
+            )
+            stored_elem = marge_add_group(datastore, account_id, payload_no_id)
+            stored_xml = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                + ET.tostring(stored_elem, encoding="unicode")
+            )
+
+            # Push the same XML to both speakers' :8090/addGroup so the
+            # firmware actually enters stereo mode.
+            async def _push(ip: str) -> tuple[str, int]:
+                url = f"http://{ip}:8090/addGroup"
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.post(
+                        url,
+                        headers={"Content-Type": "application/xml"},
+                        content=stored_xml.encode("utf-8"),
+                    )
+                    return ip, r.status_code
+
+            results = await asyncio.gather(
+                _push(master_info.ip_address),
+                _push(slave_info.ip_address),
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, BaseException):
+                    logger.error(f"stereo_pair: speaker push failed: {r!r}")
+                else:
+                    ip, status = r
+                    logger.info(f"stereo_pair: /addGroup on {ip} -> {status}")
+        except Exception as e:
+            logger.error(f"stereo_pair failed: {e}")
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.post("/miniapp/stereo-unpair")
+    async def stereo_unpair(request: Request):
+        """Tear down a stereo pair. Form field: group_id."""
+        try:
+            account_id = request.cookies.get("soundcork_account_id", "") or ""
+            form_data = await request.form()
+            group_id = str(form_data.get("group_id", "")).strip()
+            if not account_id or not group_id:
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+            group = datastore.get_group(account_id, group_id)
+            if not group:
+                logger.warning(
+                    f"stereo_unpair: group {group_id} not found in account {account_id}"
+                )
+                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+            # GET :8090/removeGroup on each speaker (Bose spec uses GET here).
+            async def _drop(ip: str) -> tuple[str, int]:
+                url = f"http://{ip}:8090/removeGroup"
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.get(url)
+                    return ip, r.status_code
+
+            results = await asyncio.gather(
+                _drop(group.left_ip),
+                _drop(group.right_ip),
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, BaseException):
+                    logger.error(f"stereo_unpair: speaker drop failed: {r!r}")
+                else:
+                    ip, status = r
+                    logger.info(f"stereo_unpair: /removeGroup on {ip} -> {status}")
+
+            try:
+                err = datastore.delete_group(account_id, group_id)
+                if err:
+                    logger.warning(f"stereo_unpair: datastore delete: {err}")
+            except Exception as e:
+                logger.error(f"stereo_unpair: datastore delete failed: {e}")
+        except Exception as e:
+            logger.error(f"stereo_unpair failed: {e}")
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
     @router.post("/miniapp/media-play")
     async def media_play_endpoint(request: Request):
         """Resume playback on the device's current source (BT/AirPlay/UPnP)."""
@@ -732,6 +923,24 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         if not selected_device_id:
             return RedirectResponse(url="/miniapp/dashboard", status_code=303)
         speakers.media_previous(selected_device_id)
+        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+
+    @router.post("/miniapp/power")
+    async def set_power(request: Request):
+        """Power a speaker on (wake from standby) or put it into standby.
+
+        Body fields:
+            device_id (str): which speaker to act on.
+            state (str): "on" or "standby".
+        """
+        form_data = await request.form()
+        device_id_raw = form_data.get("device_id", "")
+        state_raw = form_data.get("state", "")
+        device_id = str(device_id_raw).strip() if isinstance(device_id_raw, str) else ""
+        state = str(state_raw).strip().lower() if isinstance(state_raw, str) else ""
+        if not device_id or state not in ("on", "standby"):
+            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        speakers.set_power_state(device_id, on=(state == "on"))
         return RedirectResponse(url="/miniapp/dashboard", status_code=303)
 
     @router.get("/miniapp/status")
