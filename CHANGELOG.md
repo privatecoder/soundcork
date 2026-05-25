@@ -6,6 +6,64 @@ cookies (#311)`). It covers the 63 fork commits through `2dca10e`.
 
 Range summary: 47 files changed, 6,746 insertions, 2,539 deletions.
 
+## v1.1.0 — Velvet Cascade
+
+Feature release on top of v1.0.0 (Silent Harbor), adding per-device power
+control and manual ST10 stereo-pair setup, plus a fix that finally restores
+the correct product-family icons in the miniapp dashboard.
+
+### Dashboard
+
+- **Per-device power toggle.** Each online device card has a circular power
+  button in the right-side meta cluster, alongside the status badge. Reads
+  the current power state from `GetNowPlayingStatus` (parallel queries with
+  the same 3-second timeout pattern as the existing zone polling) and wraps
+  `PowerOn` / `PowerStandby` from bosesoundtouchapi.
+- New `POST /miniapp/power` endpoint driving the toggle.
+- The card's right-side area was restructured: status badge pulled out of
+  the `<button>`, and now sits in a vertically-centered flex cluster with
+  the power button (and, for ST10s, a stereo-pair link indicator) for a
+  cleaner visual grouping.
+
+### ST10 stereo-pair setup
+
+- **Manual stereo-pair UI** for SoundTouch 10s, surfaced inline on each
+  ST10 card whenever a pair-relevant state exists.
+- When a device is currently paired: shows the partner as an active chip
+  with `×` to tear down the pair.
+- When a device is unpaired and at least one other unpaired ST10 exists:
+  shows each candidate as a chip with `+` to pair (LEFT = the card
+  clicked from, RIGHT = the candidate).
+- New `POST /miniapp/stereo-pair` and `POST /miniapp/stereo-unpair`
+  endpoints. Pair: builds the `<group>` XML, persists via `marge.add_group`,
+  POSTs the resulting XML to both speakers' `:8090/addGroup`. Unpair: GETs
+  `:8090/removeGroup` on each speaker, then drops the datastore row.
+- A small chain "link" indicator appears in the meta cluster of any ST10
+  with stereo state — muted when unpaired, primary blue when actively
+  paired.
+- Multi-room chip row is hidden on the RIGHT half of a stereo pair, since
+  the SoundTouch firmware funnels multi-room through the stereo master.
+- Fixed `datastore.device_is_groupable` so it actually recognises ST10s;
+  the previous exact `== "SoundTouch 10"` check never matched real data
+  (stored value is the concatenated form `"SoundTouch 10 sm2"`).
+
+### Device images
+
+- Fixed the long-standing bug where every device card rendered with the
+  same default image. The bug came from `device_info_from_device_info_xml`
+  re-concatenating `<type>` and an empty `<moduleType>` on every reload,
+  producing a trailing-space variant (`"SoundTouch 10 sm2 "`) that missed
+  every `DEVICE_IMAGE_MAP` key and fell back to `soundtouch-30.png`.
+- ST10 now correctly renders as `d9.png`, ST20 as `d1.png`, ST30 as
+  `d2.png`.
+- `get_device_image` is now defensive against stray whitespace / `None`.
+
+### Dependencies & hygiene
+
+- Bumped `bosesoundtouchapi` 1.0.86 → 1.0.87.
+- Added a docs page for speaker setup and recovery flows.
+- Black formatting alignment.
+
 ## Product Direction
 
 - Repositioned the project as a heavily modified fork focused on keeping Bose
