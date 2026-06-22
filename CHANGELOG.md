@@ -6,6 +6,50 @@ cookies (#311)`). It covers the 63 fork commits through `2dca10e`.
 
 Range summary: 47 files changed, 6,746 insertions, 2,539 deletions.
 
+## v1.3.0 — Maiden Anchorage
+
+Feature release on top of v1.2.0 (Lucid Channel). Adds an operator path to
+bootstrap soundcork from a completely empty state — create the first account
+before any speaker has been adopted — plus development-tooling bumps. A
+fork-native take on upstream's create-account idea (#302), reviewed by a second
+model.
+
+### Admin: first-account bootstrap
+
+- **Create an account from a zero-account cold start.** Until now the admin /
+  adoption flow assumed at least one account already existed: with no accounts
+  and an orphan/blank speaker (empty `<margeAccountUUID>`), `add_device_by_ip`
+  had nothing to adopt the device into and simply failed. The admin page now
+  shows a "Create your first account" form — gated to the empty-accounts state
+  — that POSTs to a new `/admin/addAccount` route.
+- The route validates the account id against `ACCOUNT_RE` (`^\d{1,20}$`),
+  rejecting invalid ids without creating any partial state, and reuses the
+  existing `devices.add_account` / `datastore.create_account` primitives — the
+  same path the device-driven flow uses — seeding presets, recents, and a
+  `default_sources()` baseline (`AUX` + internet radio) in the exact
+  `Sources.xml` shape the speaker and datastore expect.
+- Account creation runs inline (pure datastore, no speaker I/O) and invalidates
+  the device-merge cache on success. Once the account exists, the normal
+  Add-to-Soundcork path (`add_device_by_ip` → `set_marge_account`) adopts a
+  blank/orphan device into it unchanged.
+- Implemented fork-native: wired through the existing shell-then-fragment
+  refresh (`_devices_fragment.html` kept), and deliberately *not* porting
+  upstream's blocking `time.sleep` or experimental telnet/non-rooted debug
+  stubs.
+
+### Development tooling
+
+- Bumped `black` 26.3.1 → 26.5.1 and `types-paramiko` → 4.0.0.20260518
+  (dev-only; no runtime dependency change). 26.5.1 introduced no formatting
+  drift.
+
+### Tests
+
+- New coverage for `default_sources()` validity + round-trip through
+  `ConfiguredSource`, and the `addAccount` route (valid id, invalid-id
+  rejection, zero-account cold start). `black` / `isort` / `mypy` clean; 76
+  passing.
+
 ## v1.2.0 — Lucid Channel
 
 Maintenance and hardening release on top of v1.1.0 (Velvet Cascade). No new
