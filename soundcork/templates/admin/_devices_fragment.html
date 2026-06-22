@@ -1,3 +1,35 @@
+{% if not configured_accounts %}
+<section class="dashboard-section admin-create-account" aria-labelledby="create-account-heading">
+    <div class="account-header">
+        <div class="account-header-text">
+            <h2 id="create-account-heading">No accounts configured yet</h2>
+            <p class="account-id-line">
+                Create your first soundcork account, then add a speaker to it. Account IDs are numeric (up to 20 digits) — match the speaker's existing Marge account ID if you know it.
+            </p>
+        </div>
+    </div>
+    <form action="/admin/addAccount" method="POST" class="create-account-form">
+        <label for="new-account-id" class="sr-only">New account ID (numeric)</label>
+        <input
+            type="text"
+            id="new-account-id"
+            name="account_id"
+            inputmode="numeric"
+            pattern="\d{1,20}"
+            placeholder="Account ID (e.g. 7679292)"
+            maxlength="20"
+            required>
+        <label for="new-account-label" class="sr-only">Account label</label>
+        <input
+            type="text"
+            id="new-account-label"
+            name="label"
+            placeholder="Account label (optional)"
+            maxlength="64">
+        <button type="submit" class="btn-primary">Create account</button>
+    </form>
+</section>
+{% endif %}
 {% for id, account in accounts.items() %}
 <section class="dashboard-section" aria-labelledby="account-{{ id }}-heading">
     <div class="account-header">

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
@@ -13,11 +14,13 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from soundcork.config import Settings
-from soundcork.constants import SPEAKER_OVERRIDE_SDK_LOCATION
+from soundcork.constants import ACCOUNT_RE, SPEAKER_OVERRIDE_SDK_LOCATION
 from soundcork.datastore import DataStore
 from soundcork.devices import (
+    add_account as seed_account,
     add_device_by_ip,
     addr_is_reachable,
+    default_sources,
     override_speaker_config,
     reboot_speaker,
     remove_file_from_speaker,
@@ -459,6 +462,49 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
 
         datastore.save_account_info(account_id, label)
         logger.info(f"Renamed account {account_id} to {label!r}")
+        return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+    @router.post("/admin/addAccount")
+    async def add_account(request: Request):
+        """Create a soundcork account from a blank/zero-account state.
+
+        This is the cold-start escape hatch: with no accounts configured an
+        orphan/blank speaker (empty margeAccountUUID) has nothing to be adopted
+        into. The operator seeds the first account here; afterwards the normal
+        Add-to-Soundcork path (`add_device_by_ip` → `set_marge_account`) can
+        attach a device to it.
+
+        Account creation + file seeding is pure-datastore (no speaker I/O), so
+        it runs inline — no `asyncio.to_thread` needed. We reuse
+        `devices.add_account` so presets/recents/sources are seeded by the same
+        primitive the device-driven path uses, with `default_sources()` filling
+        in for the Sources.xml we'd normally read off a speaker.
+        """
+        form_data = await request.form()
+        id_raw = form_data.get("account_id", "")
+        account_id = str(id_raw).strip() if isinstance(id_raw, str) else ""
+        label_raw = form_data.get("label", "")
+        label = str(label_raw).strip() if isinstance(label_raw, str) else ""
+
+        if not re.fullmatch(ACCOUNT_RE, account_id):
+            logger.warning(f"addAccount: rejecting invalid account_id={account_id!r}")
+            return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
+
+        created = seed_account(
+            account_id,
+            recents="<recents />",
+            presets="<presets />",
+            sources=default_sources(),
+            account_name=label or None,
+            datastore=datastore,
+        )
+        if created:
+            # A new account changes the device-merge view (orphans may now
+            # attribute to it) — drop the all_devices() memo.
+            speakers.invalidate_devices_cache()
+            logger.info(f"addAccount: created account {account_id}")
+        else:
+            logger.info(f"addAccount: account {account_id} already exists")
         return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     return router

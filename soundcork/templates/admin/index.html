@@ -428,7 +428,8 @@
                     return;
                 }
                 if (action.startsWith('/admin/addDevice/')
-                    || action.startsWith('/admin/repairDevice/')) {
+                    || action.startsWith('/admin/repairDevice/')
+                    || action === '/admin/addAccount') {
                     e.preventDefault();
                     handleQuickAction(form);
                     return;

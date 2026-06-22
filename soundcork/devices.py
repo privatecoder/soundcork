@@ -21,6 +21,7 @@ from scp import SCPClient, SCPException  # type: ignore
 
 from soundcork.config import Settings
 from soundcork.constants import (
+    DEFAULT_DATESTR,
     SPEAKER_DEVICE_INFO_PATH,
     SPEAKER_HTTP_PORT,
     SPEAKER_OVERRIDE_SDK_LOCATION,
@@ -391,6 +392,38 @@ def add_device_by_ip(hostname: str, target_account: str | None = None) -> bool:
         datastore.device_info_from_device_info_xml(info_elem),
     )
     return True
+
+
+def default_sources() -> str:
+    """Return a minimal but valid Sources.xml string for seeding a new account.
+
+    A blank account created from the admin UI (the zero-account cold start) has
+    no speaker to read a real Sources.xml from, so we seed the local sources
+    every SoundTouch exposes — AUX and internet radio — in the exact shape
+    `DataStore.get_configured_sources()` / the speaker's marge parser expect
+    (mirrors `DataStore.save_configured_sources`). Once a device is adopted it
+    can re-sync its own richer Sources.xml.
+    """
+    # (displayName, id, sourceKey type, sourceKey account, secret, secretType)
+    defaults = [
+        ("AUX IN", "100001", "AUX", "AUX", "", ""),
+        ("INTERNET RADIO", "100002", "INTERNET_RADIO", "", "", "token"),
+    ]
+    sources_root = ET.Element("sources")
+    for display_name, source_id, key_type, key_account, secret, secret_type in defaults:
+        source_elem = ET.SubElement(sources_root, "source")
+        source_elem.attrib["id"] = source_id
+        source_elem.attrib["displayName"] = display_name
+        source_elem.attrib["secret"] = secret
+        source_elem.attrib["secretType"] = secret_type
+        key_elem = ET.SubElement(source_elem, "sourceKey")
+        key_elem.attrib["type"] = key_type
+        key_elem.attrib["account"] = key_account
+        ET.SubElement(source_elem, "createdOn").text = DEFAULT_DATESTR
+        ET.SubElement(source_elem, "updatedOn").text = DEFAULT_DATESTR
+    tree = ET.ElementTree(sources_root)
+    ET.indent(tree, space="    ", level=0)
+    return ET.tostring(sources_root, encoding="unicode")
 
 
 def add_account(
