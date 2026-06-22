@@ -81,6 +81,9 @@ class FakeSpeakers:
     def get_all_power_states(self, device_ids):
         return {}
 
+    def probe_reachability(self, device_ids):
+        return set(device_ids)
+
 
 class FakeTemplates:
     def __init__(self, directory: str) -> None:

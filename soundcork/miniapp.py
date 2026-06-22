@@ -319,6 +319,16 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 "soundcork_selected_content_item_id"
             )
 
+            # One up-front parallel port-8090 probe across every online device
+            # (including the selected one). Populates the unreachable cache
+            # so subsequent speaker reads — selected-device get_volume /
+            # get_now_playing and the multi-room/power batch calls below —
+            # all short-circuit dead hosts instead of paying the connect
+            # timeout once each.
+            online_ids = [d["device_id"] for d in devices if d["status"] == "online"]
+            if online_ids:
+                speakers.probe_reachability(online_ids)
+
             # Pull live state from the selected device (no cookie state for these)
             volume = None
             now_playing = None
@@ -327,7 +337,6 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 now_playing = speakers.get_now_playing(selected_device_id)
 
             # Multi-room zone state for every online device (parallel queries).
-            online_ids = [d["device_id"] for d in devices if d["status"] == "online"]
             zone_map = speakers.get_all_zones(online_ids) if online_ids else {}
             power_state_map = (
                 speakers.get_all_power_states(online_ids) if online_ids else {}

@@ -1,6 +1,11 @@
 import logging
+import socket
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FuturesTimeoutError,
+    as_completed,
+)
 
 from bosesoundtouchapi.models import Zone, ZoneMember  # type: ignore
 from bosesoundtouchapi.soundtouchclient import (  # type: ignore
@@ -10,6 +15,7 @@ from bosesoundtouchapi.soundtouchclient import (  # type: ignore
 )
 from bosesoundtouchapi.soundtouchdiscovery import SoundTouchDiscovery  # type: ignore
 from pydantic import BaseModel, ConfigDict
+from urllib3 import PoolManager, Timeout  # type: ignore
 
 from soundcork.config import Settings
 from soundcork.datastore import DataStore
@@ -17,6 +23,71 @@ from soundcork.model import ContentItem
 
 logger = logging.getLogger(__name__)
 DISCOVERY_TIMEOUT_SECONDS = 5
+
+# Speaker-call timeouts. The default in bosesoundtouchapi is connect=30s with
+# urllib3's retry policy doing 3 attempts ~3s apart, so a single call to a
+# dead host costs ~12s. We override with a short connect timeout and disable
+# retries; a single call against a dead host now fails in ~1.5s.
+SPEAKER_HTTP_CONNECT_TIMEOUT_S = 1.5
+SPEAKER_HTTP_READ_TIMEOUT_S = 5.0
+SPEAKER_PORT_PROBE_TIMEOUT_S = 1.0
+# How long to keep a device in the "known unreachable" cache after a failed
+# call or port probe. Subsequent dashboard reads short-circuit during this
+# window. Self-heals: a single successful call clears the entry.
+UNREACHABLE_DEVICE_TTL_S = 30.0
+
+
+class _FastFailPoolManager(PoolManager):
+    """PoolManager that disables urllib3's retry-with-backoff for every
+    request. Without this, a single call to a dead host costs 3 attempts
+    spaced ~3 s apart (kernel ARP retries + urllib3 retries) = ~12 s. With
+    retries=False, the failure surfaces on the first connect-timeout.
+    """
+
+    def request(self, method, url, **kwargs):  # type: ignore[override]
+        kwargs.setdefault("retries", False)
+        return super().request(method, url, **kwargs)
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """True if `exc` looks like a transient network failure — i.e. a reason
+    to mark a device unreachable rather than surface to the caller as a
+    real error. Walks the exception chain because bosesoundtouchapi wraps
+    urllib3 errors in its own SoundTouchError."""
+    msg = str(exc).lower()
+    signals = (
+        "no route to host",
+        "host is down",
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "timed out",
+        "max retries exceeded",
+        "newconnectionerror",
+        "connecttimeouterror",
+        "readtimeouterror",
+    )
+    return any(signal in msg for signal in signals)
+
+
+def _port_reachable(
+    ip: str,
+    port: int = 8090,
+    timeout: float = SPEAKER_PORT_PROBE_TIMEOUT_S,
+) -> bool:
+    """Fast TCP connect to detect whether the speaker's HTTP API is
+    reachable. Used to short-circuit dashboard reads against dead hosts
+    before they pay the full connect-timeout cost."""
+    if not ip:
+        return False
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
 
 # Sources that represent a device-local input (Bluetooth, line-in, AirPlay
 # session etc.) rather than a streaming/preset source. When the device is
@@ -124,7 +195,145 @@ class Speakers:
         self._datastore = datastore
         self._settings = settings
         self._last_discovery_ts: float = 0.0
+        # Per-Speakers shared http manager: short connect timeout + retries
+        # disabled so a call against a dead host fails in ~1.5s instead of
+        # ~12s. Shared across all speakers — urllib3 pools by host internally.
+        self._http: PoolManager = _FastFailPoolManager(
+            headers={"User-Agent": "soundcork/1.0"},
+            timeout=Timeout(
+                connect=SPEAKER_HTTP_CONNECT_TIMEOUT_S,
+                read=SPEAKER_HTTP_READ_TIMEOUT_S,
+            ),
+            num_pools=10,
+            maxsize=30,
+            block=False,
+        )
+        # device_id -> monotonic expires_at. Devices known to be unreachable
+        # are skipped by read paths until the TTL expires. User actions
+        # bypass the cache and update it based on the result.
+        self._unreachable: dict[str, float] = {}
+        # Long-lived executor for parallel speaker calls (probes, zone/power
+        # batch reads). Using a process-wide pool means a slow speaker call
+        # stays running in a background worker without blocking the
+        # dashboard-rendering request thread — `as_completed(timeout=N)` can
+        # bail cleanly without a `with` block waiting on shutdown.
+        self._batch_pool = ThreadPoolExecutor(
+            max_workers=16, thread_name_prefix="speakers-batch"
+        )
         self.refresh_discovery(force=True)
+
+    # ------------------------------------------------------------------
+    # Unreachable-cache + client factory (used by every speaker call)
+    # ------------------------------------------------------------------
+
+    def _mark_unreachable(self, device_id: str, reason: str = "") -> None:
+        was_known = device_id in self._unreachable
+        self._unreachable[device_id] = time.monotonic() + UNREACHABLE_DEVICE_TTL_S
+        if not was_known:
+            logger.info(
+                f"Marked {device_id} unreachable for "
+                f"{int(UNREACHABLE_DEVICE_TTL_S)}s"
+                f"{f' ({reason})' if reason else ''}"
+            )
+
+    def _clear_unreachable(self, device_id: str) -> None:
+        if self._unreachable.pop(device_id, None) is not None:
+            logger.info(f"Cleared unreachable cache for {device_id}")
+
+    def _is_unreachable(self, device_id: str) -> bool:
+        expires_at = self._unreachable.get(device_id)
+        if expires_at is None:
+            return False
+        if time.monotonic() >= expires_at:
+            self._unreachable.pop(device_id, None)
+            return False
+        return True
+
+    def _make_speaker_client(
+        self,
+        cd: "CombinedDevice | None",
+        *,
+        bypass_unreachable_cache: bool = False,
+    ) -> SoundTouchClient | None:
+        """Build a fast-fail SoundTouchClient bound to our shared
+        connection pool.
+
+        Returns None if `cd` is not a discovered speaker, or if the
+        device is currently in the unreachable cache and the caller
+        didn't ask to bypass it. Background/read paths use the cache;
+        user-initiated actions (rename, play, switch source, …) bypass
+        it so the user's click always at least gets attempted.
+        """
+        if not cd or not cd.st_device:
+            return None
+        if not bypass_unreachable_cache and self._is_unreachable(cd.id):
+            return None
+        return SoundTouchClient(cd.st_device, manager=self._http)
+
+    def _record_speaker_call(self, device_id: str, exc: BaseException | None) -> None:
+        if exc is None:
+            self._clear_unreachable(device_id)
+        elif _is_connection_error(exc):
+            self._mark_unreachable(device_id, reason=type(exc).__name__)
+
+    def _filter_to_reachable_ids(self, device_ids: list[str]) -> list[str]:
+        """Return the subset of `device_ids` whose speaker HTTP API is
+        currently reachable. Devices already known unreachable are
+        skipped without probing. The rest get a fast parallel port-8090
+        probe; anything that fails to respond within
+        SPEAKER_PORT_PROBE_TIMEOUT_S is added to the cache.
+
+        Uses the long-lived `_batch_pool` so stragglers don't block the
+        caller — the timeout is honored even if a probe thread hangs.
+        """
+        fresh = [did for did in device_ids if not self._is_unreachable(did)]
+        if not fresh:
+            return []
+        cds = self.all_devices()
+        candidates: list[tuple[str, str]] = []
+        for did in fresh:
+            cd = cds.get(did)
+            if cd and cd.ip:
+                candidates.append((did, cd.ip))
+        if not candidates:
+            return []
+
+        futures = {
+            self._batch_pool.submit(_port_reachable, ip): did for did, ip in candidates
+        }
+        timeout_s = SPEAKER_PORT_PROBE_TIMEOUT_S + 0.5
+        survivors: list[str] = []
+        completed: set[str] = set()
+        try:
+            for fut in as_completed(futures, timeout=timeout_s):
+                did = futures[fut]
+                completed.add(did)
+                try:
+                    ok = fut.result()
+                except Exception:
+                    ok = False
+                if ok:
+                    survivors.append(did)
+                else:
+                    self._mark_unreachable(did, reason="port 8090 probe failed")
+        except FuturesTimeoutError:
+            pass
+        # Anything that didn't complete in time is treated as unreachable.
+        for fut, did in futures.items():
+            if did not in completed:
+                self._mark_unreachable(did, reason="port 8090 probe timed out")
+        return survivors
+
+    def probe_reachability(self, device_ids: list[str]) -> set[str]:
+        """Public entry point for callers that want to populate the
+        unreachable-device cache before a batch of speaker reads.
+
+        Used by the dashboard handler to do a single up-front probe pass
+        across all online devices before calling get_volume /
+        get_now_playing on the *selected* device, so the selected-device
+        case also benefits from the fast-fail filter.
+        """
+        return set(self._filter_to_reachable_ids(device_ids))
 
     def refresh_discovery(self, force: bool = False) -> bool:
         """Run UPnP discovery, or skip it if a recent run is still cached.
@@ -136,6 +345,10 @@ class Speakers:
             return False
         self._st_discovery.DiscoverDevices(timeout=DISCOVERY_TIMEOUT_SECONDS)
         self._last_discovery_ts = now
+        if force:
+            # User explicitly asked to rescan — also forget what we thought
+            # was unreachable. Anything actually dead will be re-detected.
+            self._unreachable.clear()
         return True
 
     def discovery_age_seconds(self) -> float:
@@ -154,6 +367,9 @@ class Speakers:
             if st:
                 self._st_discovery.VerifiedDevices.pop(f"{st.Host}:8090")
                 self._st_discovery.DiscoveredDeviceNames.pop(f"{st.Host}:8090")
+        # If we evicted a device we'd previously marked unreachable, drop
+        # the cache entry — otherwise it would linger past a real fix.
+        self._clear_unreachable(device_id)
 
     def device_by_id(self, ip_port: str) -> SoundTouchDevice:
         logger.debug(f"Getting device by id: {ip_port}")
@@ -249,13 +465,14 @@ class Speakers:
             True if successful, False otherwise
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             logger.error(f"Device {device_id} not found or not online")
             return False
 
         content_item = self._datastore.get_content_item(
-            account=cd.account,
-            device_id=cd.id,
+            account=cd.account if cd else "",
+            device_id=cd.id if cd else device_id,
             ci_id=content_item_id,
         )
         if not content_item:
@@ -268,10 +485,11 @@ class Speakers:
         bose_content_item = self._content_item_to_soundtouchclient(content_item)
 
         try:
-            client = SoundTouchClient(cd.st_device)
             client.PlayContentItem(bose_content_item)
+            self._record_speaker_call(device_id, None)
         except Exception as e:
             logger.error(f"PlayContentItem failed: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
         self._wait_for_play_state(device_id, expected_playing=True)
@@ -299,16 +517,18 @@ class Speakers:
             True if successful, False otherwise
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             logger.error(f"Device {device_id} not found or not online")
             return False
 
-        client = SoundTouchClient(cd.st_device)
         try:
             client.MediaStop()
+            self._record_speaker_call(device_id, None)
             logger.info(f"Stopped playback on device {device_id}")
         except Exception as e:
             logger.error(f"Error stopping playback on device {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
         self._wait_for_play_state(device_id, expected_playing=False)
@@ -319,16 +539,17 @@ class Speakers:
     ) -> bool:
         """Switch a device to a local input source (BLUETOOTH, AUX, etc.)."""
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             logger.error(f"Device {device_id} not found or not online")
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             item = BCContentItem(
                 source=source,
                 sourceAccount=source_account or None,
             )
             client.SelectContentItem(item)
+            self._record_speaker_call(device_id, None)
             logger.info(
                 f"Switched device {device_id} to source {source}"
                 f"{f' (account={source_account})' if source_account else ''}"
@@ -336,6 +557,7 @@ class Speakers:
             return True
         except Exception as e:
             logger.error(f"Error switching device {device_id} to source {source}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
     def get_now_playing(self, device_id: str) -> dict | None:
@@ -347,11 +569,12 @@ class Speakers:
             or None on failure.
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd)
+        if not client:
             return None
         try:
-            client = SoundTouchClient(cd.st_device)
             np = client.GetNowPlayingStatus()
+            self._record_speaker_call(device_id, None)
             play_state = (getattr(np, "PlayStatus", "") or "").upper()
             source = (getattr(np, "Source", "") or "").upper()
             is_local = source in LOCAL_SOURCE_LABELS
@@ -398,6 +621,7 @@ class Speakers:
             }
         except Exception as e:
             logger.error(f"Error getting now-playing on device {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return None
 
     def get_zone(self, device_id: str) -> dict | None:
@@ -409,13 +633,15 @@ class Speakers:
         GetZoneStatus may succeed — we treat "empty zone" as "not in a zone".
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd)
+        if not client:
             return None
         try:
-            client = SoundTouchClient(cd.st_device)
             zone = client.GetZoneStatus()
+            self._record_speaker_call(device_id, None)
         except Exception as e:
             logger.debug(f"Error getting zone for {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return None
 
         master_id = getattr(zone, "MasterDeviceId", None) or ""
@@ -443,20 +669,33 @@ class Speakers:
         """Query zone state for many devices in parallel.
 
         Returns `{device_id: zone_dict}` only for devices that ARE in a zone;
-        solo devices are omitted. Slow devices are dropped at ~3s.
+        solo devices are omitted. Unreachable devices are filtered out by a
+        fast port-8090 probe before we make any speaker calls. Uses the
+        long-lived `_batch_pool` so stragglers never block the caller.
         """
         if not device_ids:
             return {}
+        reachable_ids = self._filter_to_reachable_ids(device_ids)
+        if not reachable_ids:
+            return {}
+        futures = {
+            self._batch_pool.submit(self.get_zone, did): did for did in reachable_ids
+        }
         result: dict[str, dict] = {}
-        with ThreadPoolExecutor(max_workers=min(8, len(device_ids))) as pool:
-            futures = {pool.submit(self.get_zone, did): did for did in device_ids}
-            for fut, did in futures.items():
+        try:
+            for fut in as_completed(futures, timeout=3.0):
+                did = futures[fut]
                 try:
-                    z = fut.result(timeout=3)
+                    z = fut.result()
                 except Exception:
                     z = None
                 if z:
                     result[did] = z
+        except FuturesTimeoutError:
+            # Stragglers stay running in the background — we just don't
+            # wait on them. They'll mark themselves unreachable via the
+            # _record_speaker_call() path on their own exception.
+            pass
         return result
 
     def set_power_state(self, device_id: str, on: bool) -> bool:
@@ -467,14 +706,15 @@ class Speakers:
         a no-op. PowerStandby() PUTs `/standby` and works regardless.
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             if on:
                 client.PowerOn()
             else:
                 client.PowerStandby()
+            self._record_speaker_call(device_id, None)
             logger.info(f"set_power_state {device_id} -> {'on' if on else 'standby'}")
             return True
         except Exception as e:
@@ -482,16 +722,21 @@ class Speakers:
                 f"set_power_state {device_id} -> {'on' if on else 'standby'} "
                 f"failed: {e}"
             )
+            self._record_speaker_call(device_id, e)
             return False
 
     def get_all_power_states(self, device_ids: list[str]) -> dict[str, bool]:
         """Returns `{device_id: is_on}` for the given speakers, in parallel.
 
         A speaker is "on" when its NowPlayingStatus source is anything other
-        than STANDBY / empty. Slow devices are dropped at ~3s and excluded
-        from the result.
+        than STANDBY / empty. Unreachable devices are filtered out by a
+        fast port-8090 probe before we make any speaker calls. Uses the
+        long-lived `_batch_pool` so stragglers never block the caller.
         """
         if not device_ids:
+            return {}
+        reachable_ids = self._filter_to_reachable_ids(device_ids)
+        if not reachable_ids:
             return {}
 
         def _check(did: str) -> tuple[str, bool]:
@@ -499,15 +744,17 @@ class Speakers:
             source = ((np or {}).get("source") or "").upper()
             return did, bool(source) and source != "STANDBY"
 
+        futures = {self._batch_pool.submit(_check, did): did for did in reachable_ids}
         result: dict[str, bool] = {}
-        with ThreadPoolExecutor(max_workers=min(8, len(device_ids))) as pool:
-            futures = {pool.submit(_check, did): did for did in device_ids}
-            for fut, did in futures.items():
+        try:
+            for fut in as_completed(futures, timeout=3.0):
                 try:
-                    did_out, is_on = fut.result(timeout=3)
+                    did_out, is_on = fut.result()
                     result[did_out] = is_on
                 except Exception:
                     continue
+        except FuturesTimeoutError:
+            pass
         return result
 
     def group_toggle(self, primary_id: str, other_id: str) -> bool:
@@ -547,18 +794,26 @@ class Speakers:
                 # Add `other` to the existing zone (call the master).
                 master_id = primary_zone["master_device_id"]
                 master = self.all_devices().get(master_id)
-                if not master or not master.st_device:
+                client = self._make_speaker_client(
+                    master, bypass_unreachable_cache=True
+                )
+                if not client:
                     return False
-                client = SoundTouchClient(master.st_device)
                 client.AddZoneMembers(
                     [ZoneMember(ipAddress=other.ip, deviceId=other_id)]
                 )
+                self._record_speaker_call(master_id, None)
                 logger.info(f"Added device {other_id} to zone mastered by {master_id}")
                 self._sync_zone_volume(master_id, [other_id])
             else:
                 # Create a new zone with `primary` as master, `other` as slave.
-                client = SoundTouchClient(primary.st_device)
+                client = self._make_speaker_client(
+                    primary, bypass_unreachable_cache=True
+                )
+                if not client:
+                    return False
                 client.CreateZoneFromDevices(primary.st_device, [other.st_device])
+                self._record_speaker_call(primary_id, None)
                 logger.info(f"Created new zone: master={primary_id}, slave={other_id}")
                 self._sync_zone_volume(primary_id, [other_id])
             return True
@@ -608,7 +863,9 @@ class Speakers:
         try:
             if zone["is_master"]:
                 # Removing the master tears down the zone — pull every slave.
-                client = SoundTouchClient(cd.st_device)
+                client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+                if not client:
+                    return False
                 members = [
                     ZoneMember(ipAddress=m["ip"], deviceId=m["device_id"])
                     for m in zone["members"]
@@ -620,25 +877,28 @@ class Speakers:
                 )
                 if members:
                     client.RemoveZoneMembers(members)
+                self._record_speaker_call(device_id, None)
                 logger.info(f"Disbanded zone mastered by {device_id}")
                 return True
 
             # Slave — ask the master to remove just this slave.
             master_id = zone["master_device_id"]
             master = self.all_devices().get(master_id)
-            if not master or not master.st_device:
+            client = self._make_speaker_client(master, bypass_unreachable_cache=True)
+            if not client:
                 logger.error(
                     f"_remove_from_zone: master {master_id} of slave "
                     f"{device_id} has no st_device — cannot detach"
                 )
                 return False
-            client = SoundTouchClient(master.st_device)
             slave_member = ZoneMember(ipAddress=cd.ip, deviceId=device_id)
             logger.info(
-                f"_remove_from_zone: asking master {master_id} ({master.ip}) "
+                f"_remove_from_zone: asking master {master_id} "
+                f"({master.ip if master else '?'}) "
                 f"to drop slave {device_id} ({cd.ip})"
             )
             client.RemoveZoneMembers([slave_member])
+            self._record_speaker_call(master_id, None)
             logger.info(f"Removed slave {device_id} from zone mastered by {master_id}")
             return True
         except Exception:
@@ -661,57 +921,65 @@ class Speakers:
         Marge responses match.
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             client.SetName(new_name)
+            self._record_speaker_call(device_id, None)
             logger.info(f"Renamed device {device_id} to {new_name!r}")
             return True
         except Exception as e:
             logger.error(f"SetName failed on {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
     def media_play(self, device_id: str) -> bool:
         """Resume playback on the device's current source (AVRCP/UPnP play)."""
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             client.MediaPlay()
+            self._record_speaker_call(device_id, None)
             logger.info(f"Sent media-play to device {device_id}")
             return True
         except Exception as e:
             logger.error(f"Error sending media-play to {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
     def media_next(self, device_id: str) -> bool:
         """Skip to the next track on the device's current source."""
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             client.MediaNextTrack()
+            self._record_speaker_call(device_id, None)
             logger.info(f"Sent media-next to device {device_id}")
             return True
         except Exception as e:
             logger.error(f"Error sending media-next to {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
     def media_previous(self, device_id: str) -> bool:
         """Skip to the previous track on the device's current source."""
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             client.MediaPreviousTrack()
+            self._record_speaker_call(device_id, None)
             logger.info(f"Sent media-previous to device {device_id}")
             return True
         except Exception as e:
             logger.error(f"Error sending media-previous to {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
     def get_volume(self, device_id: str) -> dict | None:
@@ -721,44 +989,50 @@ class Speakers:
             dict with keys 'actual' (int 0-100) and 'muted' (bool), or None on failure
         """
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd)
+        if not client:
             return None
         try:
-            client = SoundTouchClient(cd.st_device)
             vol = client.GetVolume()
+            self._record_speaker_call(device_id, None)
             return {
                 "actual": getattr(vol, "Actual", 0),
                 "muted": getattr(vol, "IsMuted", False),
             }
         except Exception as e:
             logger.error(f"Error getting volume on device {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return None
 
     def set_volume(self, device_id: str, level: int) -> bool:
         """Set the volume level (0-100) on a device."""
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         level = max(0, min(100, int(level)))
         try:
-            client = SoundTouchClient(cd.st_device)
             client.SetVolumeLevel(level)
+            self._record_speaker_call(device_id, None)
             logger.info(f"Set volume to {level} on device {device_id}")
             return True
         except Exception as e:
             logger.error(f"Error setting volume on device {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
 
     def toggle_mute(self, device_id: str) -> bool:
         """Toggle mute on a device."""
         cd = self.all_devices().get(device_id)
-        if not cd or not cd.st_device:
+        client = self._make_speaker_client(cd, bypass_unreachable_cache=True)
+        if not client:
             return False
         try:
-            client = SoundTouchClient(cd.st_device)
             client.Mute()
+            self._record_speaker_call(device_id, None)
             logger.info(f"Toggled mute on device {device_id}")
             return True
         except Exception as e:
             logger.error(f"Error toggling mute on device {device_id}: {e}")
+            self._record_speaker_call(device_id, e)
             return False
