@@ -6,6 +6,80 @@ cookies (#311)`). It covers the 63 fork commits through `2dca10e`.
 
 Range summary: 47 files changed, 6,746 insertions, 2,539 deletions.
 
+## v1.2.0 — Lucid Channel
+
+Maintenance and hardening release on top of v1.1.0 (Velvet Cascade). No new
+features — instead, a two-model code audit swept the core modules for
+correctness bugs, crash paths, blocking-I/O regressions, and dead code. Every
+fix was implemented by one model and independently reviewed by another, and is
+backed by new regression tests.
+
+### Correctness fixes
+
+- **Stereo groups are listed again.** `list_groups()` passed the stored
+  filename (`Group_<id>.xml`) straight into `get_group()`, which re-wrapped it
+  to `Group_Group_<id>.xml.xml` and never matched — so saved stereo groups
+  silently never appeared on the dashboard. It now passes the bare id.
+- **No device loss when moving accounts.** `add_device_to_account()` removed
+  the device from its old account before writing the new one; a failure
+  mid-move left it in neither. It now writes the new row first, and updates in
+  place for same-account moves.
+- **Malformed speaker XML no longer crashes.** `device_info_from_poweron_xml`
+  and `group_from_xml` raised `UnboundLocalError` on partial payloads; they now
+  reject cleanly, and a malformed power-on payload no longer risks writing a
+  stray `PowerOn.xml`.
+- Fixed a preset `KeyError` (empty `source` written but read as a required
+  attribute) and a `recents_xml` `ValueError` (unguarded `int(utcTime)`) that
+  could take down the whole `account_full_xml` response.
+- Fixed Element-truthiness bugs (`if elem:` on childless XML elements) in the
+  login parse and TuneIn station/topic handling.
+- `save_account_info()`'s dedup guard looked up the wrong key and never fired;
+  it now keys by account id.
+- `scan_devices` no longer crashes on orphan speakers missing
+  `<margeAccountUUID>`.
+
+### Robustness
+
+- **Miniapp no longer pins the event loop.** ~15 blocking urllib3 speaker calls
+  in the dashboard, `/status` (polled every 3s), volume, mute, group, media,
+  power, and source handlers are now wrapped in `asyncio.to_thread`, matching
+  the discipline `admin.py` already used; the dashboard's volume and
+  now-playing reads run concurrently.
+- TuneIn requests get bounded timeouts; network/timeout failures map to 502/504
+  instead of hanging the loop or surfacing as 500s, and empty stream lists are
+  guarded against `IndexError`.
+- SSH source-read failures now propagate instead of silently adopting a device
+  with empty configured sources.
+- `_build_accounts` (the heaviest admin path) runs off the event loop.
+- `clear_device` uses `dict.pop(key, None)` so a stale key can no longer break
+  the admin remove flow.
+
+### Performance
+
+- `all_devices()` is memoized with a short TTL and explicit invalidation on
+  discovery refresh / datastore mutation, instead of being rebuilt on every
+  call.
+- Per-render reachability is probed once and reused across the zone and
+  power-state batches — keeping "unknown" devices in the cross-device peer-id
+  union — rather than probing three times per dashboard render.
+
+### Cleanup
+
+- Removed nine unused symbols/imports (`get_spotify_user_id`,
+  `tunein_search_link`, `SPOTIFY_SCOPES_FULL`, `group_exists`, `device_by_id`,
+  `discovery_age_seconds`, an unused `Zone` import, `asynccontextmanager`,
+  `DEFAULT_DATESTR`).
+- Extracted shared helpers for the duplicated `<recent>` XML builder, the
+  miniapp redirect / pending-action blocks, and the speaker batch loops.
+- `print()` → logger, `OSError` guards on `save_poweron` / `save_group`, RNG
+  import dedup, hoisted mid-module imports, a browse-ribbon off-by-one, and a
+  corrected `repair_device` docstring.
+
+### Tests
+
+- 18 new regression tests across datastore, marge, bmx, devices, and speakers,
+  plus updated test doubles. `black` / `isort` / `mypy` clean; 71 passing.
+
 ## v1.1.0 — Velvet Cascade
 
 Feature release on top of v1.0.0 (Silent Harbor), adding per-device power
