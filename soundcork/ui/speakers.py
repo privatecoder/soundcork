@@ -212,13 +212,19 @@ class Speakers:
         # are skipped by read paths until the TTL expires. User actions
         # bypass the cache and update it based on the result.
         self._unreachable: dict[str, float] = {}
-        # Long-lived executor for parallel speaker calls (probes, zone/power
-        # batch reads). Using a process-wide pool means a slow speaker call
-        # stays running in a background worker without blocking the
-        # dashboard-rendering request thread — `as_completed(timeout=N)` can
-        # bail cleanly without a `with` block waiting on shutdown.
+        # Long-lived executor for parallel speaker reads (zone/power batch
+        # calls). `as_completed(timeout=N)` lets the caller bail without
+        # waiting on shutdown; stragglers keep running in the background.
         self._batch_pool = ThreadPoolExecutor(
             max_workers=16, thread_name_prefix="speakers-batch"
+        )
+        # Separate, smaller pool for fast port probes. Keeping these off
+        # `_batch_pool` ensures that even when the batch pool is saturated
+        # by slow speaker reads, a new probe still gets a worker
+        # immediately — otherwise a probe could sit queued behind a stuck
+        # read and then get falsely marked unreachable for timing out.
+        self._probe_pool = ThreadPoolExecutor(
+            max_workers=8, thread_name_prefix="speakers-probe"
         )
         self.refresh_discovery(force=True)
 
@@ -278,13 +284,16 @@ class Speakers:
 
     def _filter_to_reachable_ids(self, device_ids: list[str]) -> list[str]:
         """Return the subset of `device_ids` whose speaker HTTP API is
-        currently reachable. Devices already known unreachable are
-        skipped without probing. The rest get a fast parallel port-8090
-        probe; anything that fails to respond within
-        SPEAKER_PORT_PROBE_TIMEOUT_S is added to the cache.
+        currently reachable.
 
-        Uses the long-lived `_batch_pool` so stragglers don't block the
-        caller — the timeout is honored even if a probe thread hangs.
+        Devices already known unreachable are skipped without probing.
+        The rest get a fast parallel port-8090 probe on the dedicated
+        `_probe_pool` (kept off `_batch_pool` so a saturated read pool
+        can't starve probes). The cache is only updated when a probe
+        actually RAN and returned a result — devices whose probe didn't
+        get scheduled in time are passed through without poisoning the
+        cache, so a contended probe queue can't falsely mark healthy
+        devices as unreachable.
         """
         fresh = [did for did in device_ids if not self._is_unreachable(did)]
         if not fresh:
@@ -299,29 +308,29 @@ class Speakers:
             return []
 
         futures = {
-            self._batch_pool.submit(_port_reachable, ip): did for did, ip in candidates
+            self._probe_pool.submit(_port_reachable, ip): did for did, ip in candidates
         }
         timeout_s = SPEAKER_PORT_PROBE_TIMEOUT_S + 0.5
         survivors: list[str] = []
-        completed: set[str] = set()
-        try:
-            for fut in as_completed(futures, timeout=timeout_s):
-                did = futures[fut]
-                completed.add(did)
-                try:
-                    ok = fut.result()
-                except Exception:
-                    ok = False
-                if ok:
-                    survivors.append(did)
-                else:
-                    self._mark_unreachable(did, reason="port 8090 probe failed")
-        except FuturesTimeoutError:
-            pass
-        # Anything that didn't complete in time is treated as unreachable.
         for fut, did in futures.items():
-            if did not in completed:
-                self._mark_unreachable(did, reason="port 8090 probe timed out")
+            try:
+                ok = fut.result(timeout=timeout_s)
+            except FuturesTimeoutError:
+                # Probe queued but didn't execute in time. Don't mark
+                # unreachable — that would punish a healthy device for a
+                # local thread-pool contention issue. Just skip it for
+                # this batch; the next render gets a fresh chance.
+                logger.debug(
+                    f"probe for {did} did not complete within "
+                    f"{timeout_s}s — treating as unknown, not unreachable"
+                )
+                continue
+            except Exception:
+                ok = False
+            if ok:
+                survivors.append(did)
+            else:
+                self._mark_unreachable(did, reason="port 8090 probe failed")
         return survivors
 
     def probe_reachability(self, device_ids: list[str]) -> set[str]:
@@ -819,6 +828,11 @@ class Speakers:
             return True
         except Exception as e:
             logger.error(f"group_toggle failed for {primary_id}+{other_id}: {e}")
+            # The call was issued against whichever speaker was acting as the
+            # zone master for this operation. Record the failure against it
+            # so future reads can short-circuit if it's actually unreachable.
+            target_id = primary_zone["master_device_id"] if primary_zone else primary_id
+            self._record_speaker_call(target_id, e)
             return False
 
     def _sync_zone_volume(self, master_id: str, slave_ids: list[str]) -> None:
@@ -901,11 +915,16 @@ class Speakers:
             self._record_speaker_call(master_id, None)
             logger.info(f"Removed slave {device_id} from zone mastered by {master_id}")
             return True
-        except Exception:
+        except Exception as e:
             logger.exception(
                 f"Could not remove {device_id} from zone "
                 f"{zone.get('master_device_id')}"
             )
+            # The call was issued against the master (whether self or another
+            # speaker). Record the failure against it so we don't keep
+            # hitting a dead host on subsequent attempts.
+            target_id = device_id if zone["is_master"] else zone["master_device_id"]
+            self._record_speaker_call(target_id, e)
             return False
 
     def ungroup_device(self, device_id: str) -> bool:
