@@ -76,9 +76,10 @@ def test_fast_fail_pool_manager_injects_retries_false():
 def test_get_all_zones_returns_before_stuck_future_completes(monkeypatch):
     """A slow get_zone() must NOT block the get_all_zones() return.
 
-    Submit one slow worker (sleeps past the batch timeout) and one fast
-    worker. The slow one stays running in the background; the call
-    returns within the timeout with only the fast result.
+    Submit one slow worker (blocks on an event past the batch timeout)
+    and one fast worker. The slow one stays running in the background
+    until the test releases it at teardown; the call returns within the
+    timeout with only the fast result.
     """
     speakers = _make_speakers(monkeypatch)
     # Bypass the port-probe filter so we hit get_zone directly.
@@ -90,32 +91,45 @@ def test_get_all_zones_returns_before_stuck_future_completes(monkeypatch):
 
     slow_started = threading.Event()
     slow_finished = threading.Event()
+    # Held until the assertions complete so the slow worker is still
+    # in-flight while we measure get_all_zones()'s return latency.
+    release = threading.Event()
 
     def fake_get_zone(did: str):
         if did == "slow":
             slow_started.set()
-            # Sleep well past the 3s as_completed timeout used by
-            # get_all_zones. If the call waits on this, the test fails.
-            time.sleep(10)
+            # Block until the test releases us. Bounded by a generous
+            # timeout so a buggy test failure doesn't hang Python's
+            # interpreter shutdown waiting on this worker.
+            release.wait(timeout=30)
             slow_finished.set()
             return {"master_device_id": "slow", "is_master": True, "members": []}
         return {"master_device_id": did, "is_master": True, "members": []}
 
     monkeypatch.setattr(speakers, "get_zone", fake_get_zone)
 
-    t0 = time.monotonic()
-    result = speakers.get_all_zones(["fast", "slow"])
-    elapsed = time.monotonic() - t0
+    try:
+        t0 = time.monotonic()
+        result = speakers.get_all_zones(["fast", "slow"])
+        elapsed = time.monotonic() - t0
 
-    # The fast result must come back; the slow one must NOT have blocked us.
-    assert "fast" in result
-    assert "slow" not in result
-    # 3s as_completed timeout + small overhead. Definitely well under 10s.
-    assert elapsed < 5, f"get_all_zones blocked {elapsed:.2f}s on stuck future"
-    # The slow worker should still be running — proof that we didn't wait
-    # on it (the with-block-shutdown bug would have).
-    assert slow_started.is_set()
-    assert not slow_finished.is_set()
+        # The fast result must come back; the slow one must NOT have
+        # blocked us.
+        assert "fast" in result
+        assert "slow" not in result
+        # 3s as_completed timeout + small overhead. Definitely well
+        # under what the slow worker is blocked on.
+        assert elapsed < 5, f"get_all_zones blocked {elapsed:.2f}s on stuck future"
+        # The slow worker should still be running — proof that we didn't
+        # wait on it (the with-block-shutdown bug would have).
+        assert slow_started.is_set()
+        assert not slow_finished.is_set()
+    finally:
+        # Wake the stuck worker so it exits promptly. Without this, the
+        # ThreadPoolExecutor would block Python interpreter shutdown
+        # waiting on the slow thread to finish, inflating the test
+        # suite's wall-clock time by ~30s.
+        release.set()
 
 
 # --- Fix C — failed reads mark unreachable; cache short-circuits --------
