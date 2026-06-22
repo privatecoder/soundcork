@@ -1,9 +1,13 @@
 import base64
 import json
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from http import HTTPStatus
+
+from fastapi import HTTPException
 
 from soundcork.config import Settings
 from soundcork.model import (
@@ -36,6 +40,41 @@ TUNEIN_NAVIGATE_ASHX = "http://opml.radiotime.com/?render=json"
 TUNEIN_SEARCH = (
     "https://api.radiotime.com/profiles?fulltextsearch=true&version=1.3&query="
 )
+
+# Without an explicit timeout urllib blocks indefinitely, which pins the
+# single-worker event loop when TuneIn is slow or unreachable.
+TUNEIN_TIMEOUT_SECONDS = 10
+
+# Placeholder reporting identifiers reused by live-radio and podcast playback.
+# The real bmx_reporting flow may need actual values eventually.
+TUNEIN_STREAM_ID = "e3342"
+TUNEIN_LISTEN_ID = "3432432423"
+
+
+def _tunein_fetch(url: str) -> str:
+    """Fetch a TuneIn/radiotime URL as text with a bounded timeout.
+
+    Maps an unreachable/slow upstream to a clean gateway error instead of
+    letting urllib's exception bubble up as an opaque 500. (Malformed-but-
+    reachable responses still surface as 500 from the JSON/XML parse, which is
+    the right signal for an unexpected payload shape.)
+    """
+    try:
+        return (
+            urllib.request.urlopen(url, timeout=TUNEIN_TIMEOUT_SECONDS)
+            .read()
+            .decode("utf-8")
+        )
+    except TimeoutError as e:
+        raise HTTPException(
+            status_code=HTTPStatus.GATEWAY_TIMEOUT,
+            detail=f"TuneIn request timed out: {url}",
+        ) from e
+    except (urllib.error.URLError, OSError) as e:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_GATEWAY,
+            detail=f"TuneIn request failed: {e}",
+        ) from e
 
 
 def bmx_services_json(settings: Settings) -> str:
@@ -80,8 +119,7 @@ def tunein_render_json_uri(tunein_uri: str) -> str:
 # TODO:  see if there is a value to varying the timeout values
 def tunein_playback(station_id: str) -> BmxPlaybackResponse:
     describe_url = TUNEIN_DESCRIBE % station_id
-    contents = urllib.request.urlopen(describe_url).read()
-    content_str = contents.decode("utf-8")
+    content_str = _tunein_fetch(describe_url)
 
     root = ET.fromstring(content_str)
 
@@ -89,33 +127,42 @@ def tunein_playback(station_id: str) -> BmxPlaybackResponse:
     outline = body.find("outline") if body is not None else None
     station_elem = outline.find("station") if outline is not None else None
 
-    name = strip_element_text(station_elem.find("name")) if station_elem else ""
-    logo = strip_element_text(station_elem.find("logo")) if station_elem else ""
+    name = (
+        strip_element_text(station_elem.find("name"))
+        if station_elem is not None
+        else ""
+    )
+    logo = (
+        strip_element_text(station_elem.find("logo"))
+        if station_elem is not None
+        else ""
+    )
 
     # not using these now but leaving the code in for use later
     # current_song_elem = station_elem.find("current_song")
-    # current_song = current_song_elem.text if current_song_elem != None else ""
+    # current_song = current_song_elem.text if current_song_elem is not None else ""
     # current_artist_elem = station_elem.find("current_artist")
-    # current_artist = current_artist_elem.text if current_artist_elem != None else ""
+    # current_artist = current_artist_elem.text if current_artist_elem is not None else ""
 
     streamreq = TUNEIN_STREAM % station_id
-    stream_url_resp = urllib.request.urlopen(streamreq).read().decode("utf-8")
+    stream_url_resp = _tunein_fetch(streamreq)
 
-    # these might be used by later calls to bmx_reporting and/or now-playing,
-    # so we might need to give them actual values
-    stream_id = "e3342"
-    listen_id = str(3432432423)
     bmx_reporting_qs = urllib.parse.urlencode(
         {
-            "stream_id": stream_id,
+            "stream_id": TUNEIN_STREAM_ID,
             "guide_id": station_id,
-            "listen_id": listen_id,
+            "listen_id": TUNEIN_LISTEN_ID,
             "stream_type": "liveRadio",
         }
     )
     bmx_reporting = "/v1/report?" + bmx_reporting_qs
 
     stream_url_list = stream_url_resp.splitlines()
+    if not stream_url_list:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_GATEWAY,
+            detail=f"No stream URL returned for station {station_id}",
+        )
     stream_list = [
         Stream(
             links={"bmx_reporting": {"href": bmx_reporting}},
@@ -183,38 +230,40 @@ def tunein_podcast_info(podcast_id: str, encoded_name: str) -> BmxPodcastInfoRes
 def tunein_playback_podcast(podcast_id: str) -> BmxPlaybackResponse:
 
     describe_url = TUNEIN_DESCRIBE % podcast_id
-    contents = urllib.request.urlopen(describe_url).read()
-    content_str = contents.decode("utf-8")
+    content_str = _tunein_fetch(describe_url)
 
     root = ET.fromstring(content_str)
 
     body = root.find("body")
     outline = body.find("outline") if body is not None else None
     topic = outline.find("topic") if outline is not None else None
-    title = strip_element_text(topic.find("title")) if topic else ""
-    show_title = strip_element_text(topic.find("show_title")) if topic else ""
-    duration = strip_element_text(topic.find("duration")) if topic else ""
-    show_id = strip_element_text(topic.find("show_id")) if topic else ""
-    logo = strip_element_text(topic.find("logo")) if topic else ""
+    title = strip_element_text(topic.find("title")) if topic is not None else ""
+    show_title = (
+        strip_element_text(topic.find("show_title")) if topic is not None else ""
+    )
+    duration = strip_element_text(topic.find("duration")) if topic is not None else ""
+    show_id = strip_element_text(topic.find("show_id")) if topic is not None else ""
+    logo = strip_element_text(topic.find("logo")) if topic is not None else ""
 
     streamreq = TUNEIN_STREAM % podcast_id
-    stream_url_resp = urllib.request.urlopen(streamreq).read().decode("utf-8")
+    stream_url_resp = _tunein_fetch(streamreq)
 
-    # these might be used by later calls to bmx_reporting and/or now-playing,
-    # so we might need to give them actual values
-    stream_id = "e3342"
-    listen_id = str(3432432423)
     bmx_reporting_qs = urllib.parse.urlencode(
         {
-            "stream_id": stream_id,
+            "stream_id": TUNEIN_STREAM_ID,
             "guide_id": podcast_id,
-            "listen_id": listen_id,
+            "listen_id": TUNEIN_LISTEN_ID,
             "stream_type": "onDemand",
         }
     )
     bmx_reporting = "/v1/report?" + bmx_reporting_qs
 
     stream_url_list = stream_url_resp.splitlines()
+    if not stream_url_list:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_GATEWAY,
+            detail=f"No stream URL returned for podcast {podcast_id}",
+        )
     stream_list = [
         Stream(
             links={"bmx_reporting": {"href": bmx_reporting}},
@@ -329,14 +378,13 @@ def tunein_navigate_v1(
 def tunein_sections_ashx(
     tunein_uri: str, subsection: int | None = None
 ) -> list[BmxNavSection]:
-    contents = urllib.request.urlopen(tunein_uri).read()
-    content_str = contents.decode("utf-8")
+    content_str = _tunein_fetch(tunein_uri)
     content_json = json.loads(content_str)
     # by default just show all of our items as a simple list
     layout = "list"
     sections = []
     items = []
-    body = content_json["body"]
+    body = content_json.get("body", [])
 
     for idx, item in enumerate(body):
         type = item.get("type", "")
@@ -365,9 +413,12 @@ def tunein_sections_ashx(
                 max_count = 5
 
             section_title = item["text"]
-            section_items = []
-            count = 0
+            section_items: list[BmxNavItem] = []
             for nav_item in item["children"]:
+                # Stop once we have max_count items; checking before append
+                # avoids the off-by-one that let max_count=5 emit 6 items.
+                if len(section_items) >= max_count:
+                    break
                 type = nav_item.get("type", "")
                 if type == "audio":
                     section_items.append(tunein_navigate_playitem(nav_item))
@@ -375,10 +426,6 @@ def tunein_sections_ashx(
                     section_items.append(tunein_navigate_link(nav_item))
                 else:
                     logger.info(f"unknown type {type} for {nav_item}")
-
-                count += 1
-                if count > max_count:
-                    break
 
             section_self_link = f"/v1/navigate/sub/{idx}/{base64.urlsafe_b64encode(tunein_uri.encode()).decode()}"
             sections.append(
@@ -448,13 +495,12 @@ def tunein_sections_jsonapi(
     this uses the api.radiotime.com api because it worked better for
     search, and worked just fine for results returned by search.
     """
-    contents = urllib.request.urlopen(tunein_uri).read()
-    content_str = contents.decode("utf-8")
+    content_str = _tunein_fetch(tunein_uri)
     content_json = json.loads(content_str)
     # by default just show all of our items as a simple list
     layout = "list"
     sections = []
-    items = content_json["Items"]
+    items = content_json.get("Items", [])
 
     for idx, item in enumerate(items):
         logger.debug(
@@ -485,8 +531,7 @@ def tunein_navigate_profile_v1(
 ) -> BmxNavResponse:
     tunein_uri = base64.urlsafe_b64decode(encoded_uri).decode()
     logger.debug(f"profile_nav tunein_uri={tunein_uri}")
-    profile_resp = urllib.request.urlopen(tunein_uri).read()
-    profile_resp_str = profile_resp.decode("utf-8")
+    profile_resp_str = _tunein_fetch(tunein_uri)
     profile_json = json.loads(profile_resp_str)
     # for profile we expect a single result
     profile_json_item = profile_json.get("Item", {})
@@ -516,11 +561,10 @@ def tunein_navigate_profile_v1(
     )
     logger.debug(f"profile_nav contents_uri={contents_uri}")
 
-    contents = urllib.request.urlopen(contents_uri).read()
-    content_str = contents.decode("utf-8")
+    content_str = _tunein_fetch(contents_uri)
     content_json = json.loads(content_str)
     # by default just show all of our items as a simple list
-    items = content_json["Items"]
+    items = content_json.get("Items", [])
 
     for idx, item in enumerate(items):
         logger.debug(
@@ -554,12 +598,11 @@ def tunein_search_v1(query: str, subsection: str | None = None) -> BmxNavRespons
         "href": "/v1/search?q={query}",
         "templated": True,
     }
-    contents = urllib.request.urlopen(tunein_uri).read()
-    content_str = contents.decode("utf-8")
+    content_str = _tunein_fetch(tunein_uri)
     content_json = json.loads(content_str)
     # by default just show all of our items as a simple list
     sections = []
-    items = content_json["Items"]
+    items = content_json.get("Items", [])
 
     for idx, item in enumerate(items):
         logger.debug(
@@ -696,21 +739,6 @@ def tunein_search_profile(item: dict, name: str) -> BmxNavItem:
         image_url=item.get("Image", ""),
         name=item.get("Title", ""),
         subtitle=item.get("Subtitle", ""),
-    )
-
-
-def tunein_search_link(item: dict) -> BmxNavItem:
-    url = tunein_render_json_uri(item.get("URL", ""))
-    enc_url = base64.urlsafe_b64encode(url.encode()).decode()
-    return BmxNavItem(
-        links={
-            "bmx_navigate": {
-                "href": f"/v1/navigate/{enc_url}",
-            }
-        },
-        image_url=item.get("image", ""),
-        name=item.get("text", ""),
-        subtitle=item.get("subtext", ""),
     )
 
 

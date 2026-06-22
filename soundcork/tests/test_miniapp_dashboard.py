@@ -75,13 +75,16 @@ class FakeSpeakers:
     def get_now_playing(self, device_id: str):
         return None
 
-    def get_all_zones(self, device_ids):
+    def get_all_zones(self, device_ids, reachable_ids=None):
         return {}
 
-    def get_all_power_states(self, device_ids):
+    def get_all_power_states(self, device_ids, reachable_ids=None):
         return {}
 
     def probe_reachability(self, device_ids):
+        return set(device_ids)
+
+    def probe_and_queryable(self, device_ids):
         return set(device_ids)
 
 

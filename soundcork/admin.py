@@ -199,9 +199,9 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         The slow UPnP rescan and reachability checks are deferred to
         /admin/devices-fragment, which the page fetches client-side.
         """
-        accounts, device_ips, _ = _build_accounts(
-            refresh=False, check_reachability=False
-        )
+        # _build_accounts does blocking discovery/reachability work; keep it off
+        # the event loop so the speaker's own marge callbacks stay serviceable.
+        accounts, device_ips, _ = await asyncio.to_thread(_build_accounts, False, False)
         base_url_check = _check_base_url(settings.base_url, device_ips)
         return templates.TemplateResponse(
             request=request,
@@ -222,9 +222,10 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         """
         force = request.query_params.get("force") == "true"
         # On the auto-fetched render, only force a fresh scan if the cache
-        # is stale; the user can hit Refresh to override that.
-        accounts, _, configured_accounts = _build_accounts(
-            refresh=force, check_reachability=True
+        # is stale; the user can hit Refresh to override that. Runs off the
+        # event loop — this is the heaviest admin path (UPnP scan + probes).
+        accounts, _, configured_accounts = await asyncio.to_thread(
+            _build_accounts, force, True
         )
         return templates.TemplateResponse(
             request=request,
@@ -302,14 +303,18 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
             form_data.get("account_id"), real_accounts
         )
         success = await asyncio.to_thread(add_device_by_ip, hostname, target_account)
+        if success:
+            # add_device_by_ip mutated the datastore — drop the all_devices()
+            # memo so the next render reflects the newly-adopted device.
+            speakers.invalidate_devices_cache()
         logger.info(f"add device {device_id} on {hostname} success={success}")
         return RedirectResponse(url="/admin/", status_code=HTTPStatus.FOUND)
 
     @router.post("/admin/repairDevice/{device_id}")
     async def repair_device(device_id: str, request: Request):
-        """Back-compat alias for addDevice. The Add path now handles the
-        orphan / no-margeAccountUUID case directly, so this endpoint is
-        kept only so older client form posts continue to work.
+        """Alias for addDevice. The Add path handles the orphan /
+        no-margeAccountUUID case directly; the admin template still posts to
+        /admin/repairDevice/, so this route remains in active use.
         """
         return await add_device_to_soundcork(device_id, request)
 
@@ -380,6 +385,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
                 device_info = datastore.get_device_info(account_id, device_id)
                 device_info.name = new_name
                 datastore.save_device_info(device_info, account_id)
+                speakers.invalidate_devices_cache()
                 logger.info(
                     f"renamed device {device_id} in account {account_id} to {new_name!r}"
                 )
@@ -431,6 +437,7 @@ def get_admin_router(datastore: DataStore, speakers: Speakers, settings: Setting
         if account_id and datastore.device_exists(account_id, device_id):
             try:
                 datastore.remove_device(account_id, device_id)
+                speakers.invalidate_devices_cache()
                 logger.info(f"deleted device {device_id} from account {account_id}")
             except Exception as e:
                 logger.error(f"datastore remove_device failed: {e}")

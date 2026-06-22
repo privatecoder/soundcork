@@ -33,14 +33,6 @@ SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 # control playback via the Spotify Web API.
 SPOTIFY_SCOPES = "user-read-private user-read-email"
 
-# full set of permissions that bose returned; included in case they're
-# needed in the future (like for browse)
-SPOTIFY_SCOPES_FULL = (
-    "streaming user-read-email user-read-private playlist-read-private"
-    " playlist-read-collaborative user-library-read user-read-playback-state"
-    " user-modify-playback-state user-read-currently-playing user-read-recently-played"
-)
-
 
 class SpotifyService:
     """TODO refactor so instead of writing to disk, it relies on either the datastore or storing in memory."""
@@ -206,10 +198,6 @@ class SpotifyService:
 
     def get_fresh_token_sync(self) -> dict:
         return asyncio.run(self._get_valid_token())
-
-    def get_spotify_user_id(self) -> str:
-        accounts = self._load_accounts()
-        return accounts[0].get("id", "")
 
     async def _get_user_profile(self, access_token: str) -> dict:
         """Fetch the current user's Spotify profile."""

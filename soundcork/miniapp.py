@@ -5,6 +5,7 @@ Endpoints for a miniapp UI.
 import asyncio
 import logging
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote
@@ -14,7 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from soundcork.constants import DEFAULT_DATESTR, DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
+from soundcork.constants import DEFAULT_DEVICE_IMAGE, DEVICE_IMAGE_MAP
 from soundcork.datastore import DataStore
 from soundcork.marge import add_group as marge_add_group
 from soundcork.model import Preset as PresetModel
@@ -36,10 +37,51 @@ EDITABLE_SOURCES = [
 
 VOLUME_STEP = 5
 
+DASHBOARD_URL = "/miniapp/dashboard"
+LOGIN_URL = "/miniapp/login"
+
 # How long the dashboard shows a pending action while waiting for the device to
 # confirm. Bose TuneIn streams can take 10-20s to buffer; the dashboard JS polls
 # /miniapp/status during this window.
 PENDING_ACTION_MAX_AGE_SECONDS = 30
+
+
+def _dashboard_redirect() -> RedirectResponse:
+    return RedirectResponse(url=DASHBOARD_URL, status_code=303)
+
+
+def _set_pending_action(response: RedirectResponse, action: str) -> None:
+    """Set the pending-action cookie (`play`/`stop`/`source-<NAME>`) so the
+    dashboard bridges the UI through actions that take seconds to land."""
+    response.set_cookie(
+        key="soundcork_pending_action",
+        value=f"{action}:{int(time.time())}",
+        max_age=PENDING_ACTION_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def _dashboard_context_defaults(
+    selected_device: str | None, selected_device_id: str | None
+) -> dict[str, Any]:
+    """Default dashboard template context. Both the happy path and the error
+    fallback start from this so they can never drift out of sync on keys."""
+    return {
+        "account_id": "",
+        "account_label": "Unknown",
+        "devices": [],
+        "presets": [],
+        "selected_content_item": None,
+        "selected_device": selected_device,
+        "selected_device_id": selected_device_id,
+        "is_playing": "false",
+        "volume": None,
+        "now_playing": None,
+        "resume_content_id": None,
+        "pending_action": None,
+        "error": None,
+    }
 
 
 def encode_cookie_value(value: object) -> str:
@@ -240,9 +282,16 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 response.delete_cookie("soundcork_account_label")
                 return response
 
-            combined_devices = speakers.all_devices()
+            combined_devices = await asyncio.to_thread(speakers.all_devices)
             devices: list[dict[str, Any]] = []
-            presets: list["Preset"] = []
+
+            # Presets are account-scoped, not per-device — fetch once up front
+            # rather than inside the device loop.
+            try:
+                presets: list["Preset"] = datastore.get_presets(account_id)
+            except Exception as e:
+                logger.warning(f"Error getting presets for account {account_id}: {e}")
+                presets = []
 
             for device_id in datastore.list_devices(account_id):
                 if device_id is None:
@@ -293,14 +342,6 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                         }
                     )
 
-                    if not presets:
-                        try:
-                            presets = datastore.get_presets(account_id)
-                        except Exception as e:
-                            logger.warning(
-                                f"Error getting presets for device {device_id}: {e}"
-                            )
-
                 except Exception as e:
                     logger.error(f"Error getting device info for {device_id}: {e}")
                     continue
@@ -326,20 +367,42 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             # all short-circuit dead hosts instead of paying the connect
             # timeout once each.
             online_ids = [d["device_id"] for d in devices if d["status"] == "online"]
+            # One probe pass warms the unreachable cache; the returned set is
+            # the devices worth querying (online minus known-dead, but KEEPING
+            # "unknown" devices so the zone-membership union below stays
+            # complete). Reused for the zone + power batches below.
+            queryable_ids: set[str] = set()
             if online_ids:
-                speakers.probe_reachability(online_ids)
+                queryable_ids = await asyncio.to_thread(
+                    speakers.probe_and_queryable, online_ids
+                )
 
-            # Pull live state from the selected device (no cookie state for these)
+            # Pull live state from the selected device (no cookie state for
+            # these). Issue the two reads concurrently off the event loop.
             volume = None
             now_playing = None
             if selected_device_id:
-                volume = speakers.get_volume(selected_device_id)
-                now_playing = speakers.get_now_playing(selected_device_id)
+                volume, now_playing = await asyncio.gather(
+                    asyncio.to_thread(speakers.get_volume, selected_device_id),
+                    asyncio.to_thread(speakers.get_now_playing, selected_device_id),
+                )
 
-            # Multi-room zone state for every online device (parallel queries).
-            zone_map = speakers.get_all_zones(online_ids) if online_ids else {}
+            # Multi-room zone + power state for every online device (parallel
+            # queries off the event loop). Reuse the up-front probe result so we
+            # don't re-probe the same hosts two more times.
+            zone_map = (
+                await asyncio.to_thread(
+                    speakers.get_all_zones, online_ids, queryable_ids
+                )
+                if online_ids
+                else {}
+            )
             power_state_map = (
-                speakers.get_all_power_states(online_ids) if online_ids else {}
+                await asyncio.to_thread(
+                    speakers.get_all_power_states, online_ids, queryable_ids
+                )
+                if online_ids
+                else {}
             )
             for d in devices:
                 d["power_on"] = power_state_map.get(d["device_id"], False)
@@ -445,24 +508,25 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 is_playing_bool,
                 now_playing.get("source") if now_playing else None,
             )
-            template_response = templates.TemplateResponse(
-                request=request,
-                name="dashboard.html",
-                context={
+            context = _dashboard_context_defaults(selected_device, selected_device_id)
+            context.update(
+                {
                     "account_id": account_id,
                     "account_label": account_label,
                     "devices": devices,
                     "presets": presets,
                     "selected_content_item": selected_content_item,
-                    "selected_device": selected_device,
-                    "selected_device_id": selected_device_id,
                     "is_playing": is_playing,
                     "volume": volume,
                     "now_playing": now_playing,
                     "resume_content_id": resume_content_id,
                     "pending_action": pending_action,
-                    "error": None,
-                },
+                }
+            )
+            template_response = templates.TemplateResponse(
+                request=request,
+                name="dashboard.html",
+                context=context,
             )
             if pending_resolved:
                 template_response.delete_cookie("soundcork_pending_action")
@@ -476,24 +540,13 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             )
             selected_device_id = request.cookies.get("soundcork_selected_device_id")
 
+            context = _dashboard_context_defaults(selected_device, selected_device_id)
+            context["account_id"] = account_id
+            context["error"] = "Error loading dashboard data"
             return templates.TemplateResponse(
                 request=request,
                 name="dashboard.html",
-                context={
-                    "account_id": account_id,
-                    "account_label": "Unknown",
-                    "devices": [],
-                    "presets": [],
-                    "selected_content_item": None,
-                    "selected_device": selected_device,
-                    "selected_device_id": selected_device_id,
-                    "is_playing": "false",
-                    "volume": None,
-                    "now_playing": None,
-                    "resume_content_id": None,
-                    "pending_action": None,
-                    "error": "Error loading dashboard data",
-                },
+                context=context,
             )
 
     @router.post("/miniapp/select-content-item")
@@ -530,17 +583,11 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
 
             selected_device_id = request.cookies.get("soundcork_selected_device_id")
             if selected_device_id:
-                success = speakers.play_content_item(
-                    selected_device_id, content_item_id
+                success = await asyncio.to_thread(
+                    speakers.play_content_item, selected_device_id, content_item_id
                 )
                 if success:
-                    response.set_cookie(
-                        key="soundcork_pending_action",
-                        value=f"play:{int(time.time())}",
-                        max_age=PENDING_ACTION_MAX_AGE_SECONDS,
-                        httponly=True,
-                        samesite="strict",
-                    )
+                    _set_pending_action(response, "play")
                     logger.info(
                         f"Started playback from preset click: content_item {content_item_id} on device {selected_device_id}"
                     )
@@ -559,36 +606,32 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         try:
             selected_device_id = request.cookies.get("soundcork_selected_device_id")
             if not selected_device_id:
-                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+                return _dashboard_redirect()
 
             form_data = await request.form()
             source = str(form_data.get("source", "")).strip().upper()
             source_account = str(form_data.get("source_account", "")).strip()
 
             if source not in {"BLUETOOTH", "AUX"}:
-                return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+                return _dashboard_redirect()
 
             # The Bose source registry tags AUX with sourceAccount="AUX"
             # but Bluetooth has no sourceAccount.
             if source == "AUX" and not source_account:
                 source_account = "AUX"
 
-            success = speakers.select_source(selected_device_id, source, source_account)
+            success = await asyncio.to_thread(
+                speakers.select_source, selected_device_id, source, source_account
+            )
 
-            response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            response = _dashboard_redirect()
             if success:
-                response.set_cookie(
-                    key="soundcork_pending_action",
-                    value=f"source-{source}:{int(time.time())}",
-                    max_age=PENDING_ACTION_MAX_AGE_SECONDS,
-                    httponly=True,
-                    samesite="strict",
-                )
+                _set_pending_action(response, f"source-{source}")
             return response
 
         except Exception as e:
             logger.error(f"Error in select-source endpoint: {e}")
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
 
     @router.post("/miniapp/select-device")
     async def select_device(request: Request):
@@ -651,19 +694,15 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             )
 
             # Play the content_item
-            success = speakers.play_content_item(
-                selected_device_id, str(selected_content_item_id)
+            success = await asyncio.to_thread(
+                speakers.play_content_item,
+                selected_device_id,
+                str(selected_content_item_id),
             )
 
-            response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            response = _dashboard_redirect()
             if success:
-                response.set_cookie(
-                    key="soundcork_pending_action",
-                    value=f"play:{int(time.time())}",
-                    max_age=PENDING_ACTION_MAX_AGE_SECONDS,
-                    httponly=True,
-                    samesite="strict",
-                )
+                _set_pending_action(response, "play")
                 logger.info(
                     f"Started playback: content_item {selected_content_item_id} on device {selected_device_id}"
                 )
@@ -674,7 +713,7 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
 
         except Exception as e:
             logger.error(f"Error in play endpoint: {e}")
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
 
     @router.post("/miniapp/stop")
     async def stop(request: Request):
@@ -687,17 +726,13 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
                 return RedirectResponse(url="/miniapp/dashboard", status_code=303)
 
             # Stop playback
-            success = speakers.stop_playback(selected_device_id)
+            success = await asyncio.to_thread(
+                speakers.stop_playback, selected_device_id
+            )
 
-            response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            response = _dashboard_redirect()
             if success:
-                response.set_cookie(
-                    key="soundcork_pending_action",
-                    value=f"stop:{int(time.time())}",
-                    max_age=PENDING_ACTION_MAX_AGE_SECONDS,
-                    httponly=True,
-                    samesite="strict",
-                )
+                _set_pending_action(response, "stop")
                 logger.info(f"Stopped playback on device {selected_device_id}")
             else:
                 logger.error("Failed to stop playback")
@@ -706,42 +741,46 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
 
         except Exception as e:
             logger.error(f"Error in stop endpoint: {e}")
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
 
     @router.post("/miniapp/volume-up")
     async def volume_up(request: Request):
         """Increase volume on the selected device by VOLUME_STEP."""
         selected_device_id = request.cookies.get("soundcork_selected_device_id")
         if not selected_device_id:
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        current = speakers.get_volume(selected_device_id)
+            return _dashboard_redirect()
+        current = await asyncio.to_thread(speakers.get_volume, selected_device_id)
         if current is not None:
-            speakers.set_volume(
-                selected_device_id, min(100, current["actual"] + VOLUME_STEP)
+            await asyncio.to_thread(
+                speakers.set_volume,
+                selected_device_id,
+                min(100, current["actual"] + VOLUME_STEP),
             )
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/volume-down")
     async def volume_down(request: Request):
         """Decrease volume on the selected device by VOLUME_STEP."""
         selected_device_id = request.cookies.get("soundcork_selected_device_id")
         if not selected_device_id:
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        current = speakers.get_volume(selected_device_id)
+            return _dashboard_redirect()
+        current = await asyncio.to_thread(speakers.get_volume, selected_device_id)
         if current is not None:
-            speakers.set_volume(
-                selected_device_id, max(0, current["actual"] - VOLUME_STEP)
+            await asyncio.to_thread(
+                speakers.set_volume,
+                selected_device_id,
+                max(0, current["actual"] - VOLUME_STEP),
             )
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/mute")
     async def mute_toggle(request: Request):
         """Toggle mute on the selected device."""
         selected_device_id = request.cookies.get("soundcork_selected_device_id")
         if not selected_device_id:
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        speakers.toggle_mute(selected_device_id)
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
+        await asyncio.to_thread(speakers.toggle_mute, selected_device_id)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/group-toggle")
     async def group_toggle(request: Request):
@@ -751,10 +790,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             device_id = str(form_data.get("device_id", "")).strip()
             other_id = str(form_data.get("other_id", "")).strip()
             if device_id and other_id and device_id != other_id:
-                speakers.group_toggle(device_id, other_id)
+                await asyncio.to_thread(speakers.group_toggle, device_id, other_id)
         except Exception as e:
             logger.error(f"Error in group-toggle: {e}")
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/group-leave")
     async def group_leave(request: Request):
@@ -763,10 +802,10 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
             form_data = await request.form()
             device_id = str(form_data.get("device_id", "")).strip()
             if device_id:
-                speakers.ungroup_device(device_id)
+                await asyncio.to_thread(speakers.ungroup_device, device_id)
         except Exception as e:
             logger.error(f"Error in group-leave: {e}")
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/stereo-pair")
     async def stereo_pair(request: Request):
@@ -798,8 +837,6 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
 
             # Build the <group> XML and persist via marge.add_group, which
             # assigns the group_id and writes Group_{id}.xml under the account.
-            import xml.etree.ElementTree as ET  # local import; rarely used
-
             g = ET.Element("group")
             ET.SubElement(g, "name").text = f"{master_info.name} + {slave_info.name}"
             ET.SubElement(g, "masterDeviceId").text = master_id
@@ -900,17 +937,11 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         """Resume playback on the device's current source (BT/AirPlay/UPnP)."""
         selected_device_id = request.cookies.get("soundcork_selected_device_id")
         if not selected_device_id:
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        success = speakers.media_play(selected_device_id)
-        response = RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
+        success = await asyncio.to_thread(speakers.media_play, selected_device_id)
+        response = _dashboard_redirect()
         if success:
-            response.set_cookie(
-                key="soundcork_pending_action",
-                value=f"play:{int(time.time())}",
-                max_age=PENDING_ACTION_MAX_AGE_SECONDS,
-                httponly=True,
-                samesite="strict",
-            )
+            _set_pending_action(response, "play")
         return response
 
     @router.post("/miniapp/media-next")
@@ -918,18 +949,18 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         """Skip to the next track on the device's current source."""
         selected_device_id = request.cookies.get("soundcork_selected_device_id")
         if not selected_device_id:
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        speakers.media_next(selected_device_id)
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
+        await asyncio.to_thread(speakers.media_next, selected_device_id)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/media-previous")
     async def media_previous_endpoint(request: Request):
         """Skip to the previous track on the device's current source."""
         selected_device_id = request.cookies.get("soundcork_selected_device_id")
         if not selected_device_id:
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        speakers.media_previous(selected_device_id)
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
+        await asyncio.to_thread(speakers.media_previous, selected_device_id)
+        return _dashboard_redirect()
 
     @router.post("/miniapp/power")
     async def set_power(request: Request):
@@ -945,9 +976,9 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         device_id = str(device_id_raw).strip() if isinstance(device_id_raw, str) else ""
         state = str(state_raw).strip().lower() if isinstance(state_raw, str) else ""
         if not device_id or state not in ("on", "standby"):
-            return RedirectResponse(url="/miniapp/dashboard", status_code=303)
-        speakers.set_power_state(device_id, on=(state == "on"))
-        return RedirectResponse(url="/miniapp/dashboard", status_code=303)
+            return _dashboard_redirect()
+        await asyncio.to_thread(speakers.set_power_state, device_id, on=(state == "on"))
+        return _dashboard_redirect()
 
     @router.get("/miniapp/status")
     async def status(request: Request) -> JSONResponse:
@@ -961,8 +992,12 @@ def get_miniapp_router(datastore: DataStore, speakers: Speakers):
         if not selected_device_id:
             return JSONResponse({"selected": False})
 
-        volume = speakers.get_volume(selected_device_id)
-        now_playing = speakers.get_now_playing(selected_device_id)
+        # This endpoint is polled every 3s by every open dashboard; run the
+        # blocking speaker reads off the event loop, concurrently.
+        volume, now_playing = await asyncio.gather(
+            asyncio.to_thread(speakers.get_volume, selected_device_id),
+            asyncio.to_thread(speakers.get_now_playing, selected_device_id),
+        )
         is_playing_bool = bool(now_playing and now_playing["is_playing"])
 
         pending_action, _ = _read_pending_action(

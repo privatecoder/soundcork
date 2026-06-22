@@ -7,7 +7,7 @@ from concurrent.futures import (
     as_completed,
 )
 
-from bosesoundtouchapi.models import Zone, ZoneMember  # type: ignore
+from bosesoundtouchapi.models import ZoneMember  # type: ignore
 from bosesoundtouchapi.soundtouchclient import (  # type: ignore
     ContentItem as BCContentItem,
     SoundTouchClient,
@@ -142,6 +142,13 @@ LOCAL_TRANSPORT_SOURCES = {
 # with refresh_discovery(force=True) when the user explicitly asks for it.
 DISCOVERY_CACHE_TTL_SECONDS = 30
 
+# all_devices() walks every account + every device's stored DeviceInfo, so a
+# single dashboard render (which fans out to zones/power/per-device reads)
+# rebuilds it dozens of times. Memoize it for a brief window to coalesce that
+# burst; the cache self-invalidates on discovery refresh, clear_device, and
+# explicit invalidate_devices_cache() calls after datastore mutations.
+ALL_DEVICES_CACHE_TTL_S = 1.0
+
 # Short post-action poll so snappy devices show their new state on the
 # first dashboard render after the redirect. Slow devices (TuneIn streams
 # can take 10-20s to buffer) are handled separately via a pending-action
@@ -195,6 +202,9 @@ class Speakers:
         self._datastore = datastore
         self._settings = settings
         self._last_discovery_ts: float = 0.0
+        # Short-TTL memo for all_devices() — see ALL_DEVICES_CACHE_TTL_S.
+        self._all_devices_cache: dict[str, CombinedDevice] | None = None
+        self._all_devices_cache_ts: float = 0.0
         # Per-Speakers shared http manager: short connect timeout + retries
         # disabled so a call against a dead host fails in ~1.5s instead of
         # ~12s. Shared across all speakers — urllib3 pools by host internally.
@@ -344,6 +354,21 @@ class Speakers:
         """
         return set(self._filter_to_reachable_ids(device_ids))
 
+    def probe_and_queryable(self, device_ids: list[str]) -> set[str]:
+        """Probe reachability (warming the unreachable cache) and return the
+        set of devices still worth querying: everything NOT known-unreachable.
+
+        Unlike probe_reachability(), this keeps devices whose probe was
+        inconclusive ("unknown" — the probe timed out without marking them
+        unreachable). Those still get a real speaker call so they aren't
+        dropped from the cross-device zone-membership union (the per-device
+        GetZoneStatus views the dashboard unions by master_device_id). The
+        dashboard reuses this one result for both the zone and power batches
+        instead of re-probing the same hosts.
+        """
+        self._filter_to_reachable_ids(device_ids)  # side effect: mark dead
+        return {did for did in device_ids if not self._is_unreachable(did)}
+
     def refresh_discovery(self, force: bool = False) -> bool:
         """Run UPnP discovery, or skip it if a recent run is still cached.
 
@@ -354,17 +379,17 @@ class Speakers:
             return False
         self._st_discovery.DiscoverDevices(timeout=DISCOVERY_TIMEOUT_SECONDS)
         self._last_discovery_ts = now
+        self.invalidate_devices_cache()
         if force:
             # User explicitly asked to rescan — also forget what we thought
             # was unreachable. Anything actually dead will be re-detected.
             self._unreachable.clear()
         return True
 
-    def discovery_age_seconds(self) -> float:
-        """Seconds since the last successful discovery, for UI display."""
-        if self._last_discovery_ts == 0.0:
-            return float("inf")
-        return time.monotonic() - self._last_discovery_ts
+    def invalidate_devices_cache(self) -> None:
+        """Drop the all_devices() memo. Call after any datastore mutation
+        (device add/remove/rename) so the next read rebuilds fresh."""
+        self._all_devices_cache = None
 
     def soundtouch_devices(self) -> dict:
         return self._st_discovery.VerifiedDevices
@@ -374,15 +399,15 @@ class Speakers:
         if cd:
             st = cd.st_device
             if st:
-                self._st_discovery.VerifiedDevices.pop(f"{st.Host}:8090")
-                self._st_discovery.DiscoveredDeviceNames.pop(f"{st.Host}:8090")
+                # Use pop(..., None): the host:port key may already be gone
+                # (already evicted, or a differing key format), and an
+                # unguarded pop would raise KeyError and abort the eviction.
+                self._st_discovery.VerifiedDevices.pop(f"{st.Host}:8090", None)
+                self._st_discovery.DiscoveredDeviceNames.pop(f"{st.Host}:8090", None)
         # If we evicted a device we'd previously marked unreachable, drop
         # the cache entry — otherwise it would linger past a real fix.
         self._clear_unreachable(device_id)
-
-    def device_by_id(self, ip_port: str) -> SoundTouchDevice:
-        logger.debug(f"Getting device by id: {ip_port}")
-        return self._st_discovery.VerifiedDevices.get(ip_port)
+        self.invalidate_devices_cache()
 
     def all_devices(self) -> dict[str, CombinedDevice]:
         """
@@ -390,6 +415,14 @@ class Speakers:
         all devices configured in soundcork as a dict with the device
         id as the key
         """
+        cache = self._all_devices_cache
+        if (
+            cache is not None
+            and (time.monotonic() - self._all_devices_cache_ts)
+            < ALL_DEVICES_CACHE_TTL_S
+        ):
+            return cache
+
         combined_devices = {}
         account_ids = self._datastore.list_accounts()
         for account_id in account_ids:
@@ -450,6 +483,8 @@ class Speakers:
             else:
                 sc_device.marge_server = f"Unknown ({st_device.StreamingUrl})"
 
+        self._all_devices_cache = combined_devices
+        self._all_devices_cache_ts = time.monotonic()
         return combined_devices
 
     def _content_item_to_soundtouchclient(self, ci: ContentItem) -> BCContentItem:
@@ -674,38 +709,62 @@ class Speakers:
             "members": members,
         }
 
-    def get_all_zones(self, device_ids: list[str]) -> dict[str, dict]:
+    def _run_batch(self, items, fn, timeout: float = 3.0) -> dict:
+        """Run `fn(item)` over `items` on the batch pool, returning
+        `{item: result}` for those that completed within `timeout`.
+
+        Stragglers keep running in the background — we don't wait on them;
+        they mark themselves unreachable via _record_speaker_call() on their
+        own exception. Shared by get_all_zones/get_all_power_states so the
+        as_completed scaffolding lives in one place.
+        """
+        futures = {self._batch_pool.submit(fn, item): item for item in items}
+        results: dict = {}
+        try:
+            for fut in as_completed(futures, timeout=timeout):
+                item = futures[fut]
+                try:
+                    results[item] = fut.result()
+                except Exception:
+                    continue
+        except FuturesTimeoutError:
+            pass
+        return results
+
+    def _reachable_subset(
+        self, device_ids: list[str], reachable_ids: set[str] | None
+    ) -> list[str]:
+        """Resolve which devices to call. If the caller already probed
+        reachability (e.g. the dashboard's single up-front pass), reuse that
+        set instead of probing again; otherwise probe now."""
+        if reachable_ids is None:
+            return self._filter_to_reachable_ids(device_ids)
+        return [did for did in device_ids if did in reachable_ids]
+
+    def get_all_zones(
+        self, device_ids: list[str], reachable_ids: set[str] | None = None
+    ) -> dict[str, dict]:
         """Query zone state for many devices in parallel.
 
         Returns `{device_id: zone_dict}` only for devices that ARE in a zone;
         solo devices are omitted. Unreachable devices are filtered out by a
-        fast port-8090 probe before we make any speaker calls. Uses the
+        fast port-8090 probe before we make any speaker calls (pass
+        `reachable_ids` to reuse a probe the caller already ran). Uses the
         long-lived `_batch_pool` so stragglers never block the caller.
+
+        NOTE: each value is that device's OWN GetZoneStatus view, which the
+        firmware reports asymmetrically (a slave often lists only itself).
+        Callers that need full membership must union the results by
+        `master_device_id` across all devices (see miniapp's peer_ids logic).
         """
         if not device_ids:
             return {}
-        reachable_ids = self._filter_to_reachable_ids(device_ids)
-        if not reachable_ids:
+        targets = self._reachable_subset(device_ids, reachable_ids)
+        if not targets:
             return {}
-        futures = {
-            self._batch_pool.submit(self.get_zone, did): did for did in reachable_ids
+        return {
+            did: z for did, z in self._run_batch(targets, self.get_zone).items() if z
         }
-        result: dict[str, dict] = {}
-        try:
-            for fut in as_completed(futures, timeout=3.0):
-                did = futures[fut]
-                try:
-                    z = fut.result()
-                except Exception:
-                    z = None
-                if z:
-                    result[did] = z
-        except FuturesTimeoutError:
-            # Stragglers stay running in the background — we just don't
-            # wait on them. They'll mark themselves unreachable via the
-            # _record_speaker_call() path on their own exception.
-            pass
-        return result
 
     def set_power_state(self, device_id: str, on: bool) -> bool:
         """Power a speaker on (wake from standby) or put it into standby.
@@ -734,37 +793,29 @@ class Speakers:
             self._record_speaker_call(device_id, e)
             return False
 
-    def get_all_power_states(self, device_ids: list[str]) -> dict[str, bool]:
+    def get_all_power_states(
+        self, device_ids: list[str], reachable_ids: set[str] | None = None
+    ) -> dict[str, bool]:
         """Returns `{device_id: is_on}` for the given speakers, in parallel.
 
         A speaker is "on" when its NowPlayingStatus source is anything other
         than STANDBY / empty. Unreachable devices are filtered out by a
-        fast port-8090 probe before we make any speaker calls. Uses the
+        fast port-8090 probe before we make any speaker calls (pass
+        `reachable_ids` to reuse a probe the caller already ran). Uses the
         long-lived `_batch_pool` so stragglers never block the caller.
         """
         if not device_ids:
             return {}
-        reachable_ids = self._filter_to_reachable_ids(device_ids)
-        if not reachable_ids:
+        targets = self._reachable_subset(device_ids, reachable_ids)
+        if not targets:
             return {}
 
-        def _check(did: str) -> tuple[str, bool]:
+        def _check(did: str) -> bool:
             np = self.get_now_playing(did)
             source = ((np or {}).get("source") or "").upper()
-            return did, bool(source) and source != "STANDBY"
+            return bool(source) and source != "STANDBY"
 
-        futures = {self._batch_pool.submit(_check, did): did for did in reachable_ids}
-        result: dict[str, bool] = {}
-        try:
-            for fut in as_completed(futures, timeout=3.0):
-                try:
-                    did_out, is_on = fut.result()
-                    result[did_out] = is_on
-                except Exception:
-                    continue
-        except FuturesTimeoutError:
-            pass
-        return result
+        return self._run_batch(targets, _check)
 
     def group_toggle(self, primary_id: str, other_id: str) -> bool:
         """Make `primary` and `other` share a zone, or undo if already shared.
@@ -847,7 +898,9 @@ class Speakers:
             target = int(master_vol["actual"])
             for slave_id in slave_ids:
                 slave_vol = self.get_volume(slave_id)
-                if slave_vol and int(slave_vol.get("actual", -1)) == target:
+                # get_volume always includes "actual"; skip the slave only if
+                # it already matches the master's level.
+                if slave_vol and int(slave_vol["actual"]) == target:
                     continue
                 self.set_volume(slave_id, target)
                 logger.info(

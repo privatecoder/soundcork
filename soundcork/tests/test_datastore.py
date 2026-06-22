@@ -2,6 +2,7 @@
 
 These tests mock out all filesystem interactions and focus on logic."""
 
+import json
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, call, mock_open
 
@@ -17,7 +18,7 @@ from soundcork.constants import (
     RECENTS_FILE,
 )
 from soundcork.datastore import DataStore
-from soundcork.model import ConfiguredSource, DeviceInfo, Preset, Recent
+from soundcork.model import ConfiguredSource, DeviceInfo, Group, Preset, Recent
 
 
 @pytest.fixture
@@ -681,3 +682,154 @@ def test_device_info_from_device_info_xml_missing_required_fields_raises(
 
     with pytest.raises(RuntimeError):
         datastore.device_info_from_device_info_xml(root)
+
+
+def test_get_presets_handles_missing_source_attribute(
+    datastore: DataStore, monkeypatch
+):
+    # A preset persisted without a `source` attribute (save_presets only writes
+    # it when truthy) must not raise KeyError on read.
+    xml = ET.fromstring("""
+        <presets>
+          <preset id="1" createdOn="" updatedOn="">
+            <ContentItem type="uri" location="http://a" isPresetable="true">
+              <itemName>A</itemName>
+              <containerArt>bloop</containerArt>
+            </ContentItem>
+          </preset>
+        </presets>
+        """)
+    monkeypatch.setattr("soundcork.datastore.ET.parse", lambda _: ET.ElementTree(xml))
+    monkeypatch.setattr("soundcork.datastore.path.exists", lambda _: True)
+
+    loaded = datastore.get_presets("12345")
+
+    assert len(loaded) == 1
+    assert loaded[0].source == ""
+
+
+def test_save_account_info_skips_when_label_unchanged(
+    datastore: DataStore, monkeypatch
+):
+    open_mock = mock_open(read_data=json.dumps({"12345": {"label": "Same"}}))
+    monkeypatch.setattr("builtins.open", open_mock)
+
+    datastore.save_account_info("12345", "Same")
+
+    # No write handle should have been opened (only the read).
+    assert all(c.args[1] != "w" for c in open_mock.call_args_list if len(c.args) > 1)
+
+
+def test_save_account_info_overwrites_when_label_differs(
+    datastore: DataStore, monkeypatch
+):
+    open_mock = mock_open(read_data=json.dumps({"12345": {"label": "Old"}}))
+    monkeypatch.setattr("builtins.open", open_mock)
+
+    datastore.save_account_info("12345", "New")
+
+    handle = open_mock()
+    written = "".join(c.args[0] for c in handle.write.call_args_list)
+    assert "New" in written
+
+
+def test_add_source_with_empty_sources_does_not_raise(
+    datastore: DataStore, monkeypatch
+):
+    monkeypatch.setattr(datastore, "get_configured_sources", lambda *_: [])
+    save_mock = MagicMock()
+    monkeypatch.setattr(datastore, "save_configured_sources", save_mock)
+
+    new_source = ConfiguredSource(
+        display_name="Internet Radio",
+        id="",
+        secret="",
+        secret_type="",
+        source_key_type="INTERNET_RADIO",
+        source_key_account="",
+        created_on="",
+        updated_on="",
+    )
+
+    result = datastore.add_source("12345", new_source)
+
+    assert result.id == "100001"
+    save_mock.assert_called_once()
+
+
+def test_list_groups_lists_stored_group(datastore: DataStore, monkeypatch):
+    # Regression: list_groups passed the full filename into get_group, which
+    # re-wrapped it to "Group_Group_123.xml.xml" so groups were never listed.
+    monkeypatch.setattr(
+        "soundcork.datastore.listdir", lambda _: ["Group_123.xml", "DeviceInfo.xml"]
+    )
+    captured_ids = []
+
+    def fake_get_group(account, group_id):
+        captured_ids.append(group_id)
+        return Group(
+            id=group_id,
+            name="Pair",
+            master_id="L",
+            left_id="L",
+            left_ip="1.1.1.1",
+            right_id="R",
+            right_ip="2.2.2.2",
+        )
+
+    monkeypatch.setattr(datastore, "get_group", fake_get_group)
+
+    groups = datastore.list_groups("12345")
+
+    assert captured_ids == ["123"]
+    assert len(groups) == 1
+    assert groups[0].id == "123"
+
+
+def test_group_from_xml_handles_missing_roles(datastore: DataStore):
+    # A malformed group file (no <roles>) must not raise UnboundLocalError.
+    elem = ET.fromstring(
+        "<group><name>Pair</name><masterDeviceId>L</masterDeviceId></group>"
+    )
+
+    group = datastore.group_from_xml("123", elem)
+
+    assert group.id == "123"
+    assert group.left_id == ""
+    assert group.right_id == ""
+
+
+def test_device_info_from_poweron_xml_rejects_missing_device_id(datastore: DataStore):
+    # A malformed poweron XML (no <device> / no id) must raise a controlled
+    # error, not return an empty device_id (which would write a stray
+    # PowerOn.xml at the devices-dir root via save_poweron("", ...)).
+    elem = ET.fromstring("<updates></updates>")
+
+    with pytest.raises(RuntimeError):
+        datastore.device_info_from_poweron_xml(elem)
+
+
+def test_device_info_from_poweron_xml_handles_missing_optional_fields(
+    datastore: DataStore,
+):
+    # device id present but everything else missing — no UnboundLocalError.
+    elem = ET.fromstring('<updates><device id="ABC"></device></updates>')
+
+    info = datastore.device_info_from_poweron_xml(elem)
+
+    assert info.device_id == "ABC"
+    assert info.ip_address == ""
+
+
+def test_save_poweron_wraps_oserror_in_http_exception(
+    datastore: DataStore, sample_device: DeviceInfo, monkeypatch
+):
+    monkeypatch.setattr("soundcork.datastore.path.exists", lambda _: True)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("builtins.open", boom)
+
+    with pytest.raises(HTTPException):
+        datastore.save_poweron(sample_device.device_id, "<updates />")

@@ -69,9 +69,15 @@ def read_presets(hostname: str) -> str:
     return read_file_from_speaker_http(hostname, SPEAKER_PRESETS_PATH)
 
 
-def read_sources(hostname: str) -> str:
+def read_sources(hostname: str) -> str | None:
+    """Read the speaker's Sources file over SSH.
+
+    Returns the file contents on success, or None if the SCP read failed so
+    callers can distinguish a transient failure from a genuinely empty file
+    (and avoid seeding a new account with empty configured sources).
+    """
     sources_tmp_file = tempfile.NamedTemporaryFile(delete=False)
-    read_file_from_speaker_ssh(
+    ok = read_file_from_speaker_ssh(
         host=hostname,
         remote_path=SPEAKER_SOURCES_FILE_LOCATION,
         local_path=sources_tmp_file.name,
@@ -79,6 +85,9 @@ def read_sources(hostname: str) -> str:
     sources = sources_tmp_file.read()
     sources_tmp_file.close()
     unlink(sources_tmp_file.name)
+    if not ok:
+        logger.warning(f"read_sources: SSH read failed for {hostname}")
+        return None
     return sources.decode()
 
 
@@ -109,7 +118,11 @@ def write_file_to_speaker(payload: BytesIO, host: str, remote_path: str) -> bool
             auth_timeout=SSH_TIMEOUT_SECONDS,
         )
 
-        with SCPClient(ssh.get_transport()) as scp:
+        transport = ssh.get_transport()
+        if transport is None:
+            logger.info(f"No SSH transport available to {host}")
+            return False
+        with SCPClient(transport) as scp:
             scp.putfo(payload, remote_path)
     except (OSError, paramiko.SSHException, SCPException) as e:
         logger.info(f"Error: {e}")
@@ -172,8 +185,12 @@ def reboot_speaker(host: str) -> bool:
         ssh.close()
 
 
-def read_file_from_speaker_ssh(host: str, remote_path: str, local_path: str) -> None:
-    """Read a file from the remote speaker, using ssh."""
+def read_file_from_speaker_ssh(host: str, remote_path: str, local_path: str) -> bool:
+    """Read a file from the remote speaker, using ssh.
+
+    Returns True if the file was fetched, False if the SSH/SCP read failed so
+    callers can distinguish a transient failure from a genuinely empty file.
+    """
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -187,10 +204,16 @@ def read_file_from_speaker_ssh(host: str, remote_path: str, local_path: str) -> 
             auth_timeout=SSH_TIMEOUT_SECONDS,
         )
 
-        with SCPClient(ssh.get_transport()) as scp:
+        transport = ssh.get_transport()
+        if transport is None:
+            logger.info(f"No SSH transport available to {host}")
+            return False
+        with SCPClient(transport) as scp:
             scp.get(remote_path, local_path)
+        return True
     except (OSError, paramiko.SSHException, SCPException) as e:
         logger.info(f"Error: {e}")
+        return False
     finally:
         ssh.close()
 
@@ -348,9 +371,17 @@ def add_device_by_ip(hostname: str, target_account: str | None = None) -> bool:
         set_marge_account(hostname, account_id)
 
     if not datastore.account_exists(account_id):
+        sources = read_sources(hostname)
+        if sources is None:
+            # SSH sources read failed — abort rather than create the account
+            # with empty configured sources (which the speaker can't play).
+            logger.error(
+                f"add_device_by_ip: could not read sources from {hostname} over "
+                f"SSH; aborting so we don't seed account {account_id} empty"
+            )
+            return False
         recents = read_recents(hostname)
         presets = read_presets(hostname)
-        sources = read_sources(hostname)
         # FIXME get the account email address for this
         add_account(account_id, recents, presets, sources, None, datastore)
 

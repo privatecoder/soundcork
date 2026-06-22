@@ -3,7 +3,6 @@ import logging
 import os
 import re
 import xml.etree.ElementTree as ET
-from contextlib import asynccontextmanager
 from datetime import datetime
 from http import HTTPStatus
 from typing import Annotated
@@ -39,6 +38,7 @@ from soundcork.devices import (
 )
 from soundcork.groups import get_groups_router
 from soundcork.groups_service import get_groups_service_router
+from soundcork.management import router as management_router
 from soundcork.marge import (
     account_devices_xml,
     account_full_xml,
@@ -67,6 +67,7 @@ from soundcork.model import (
     BoseXMLResponse,
     Service,
 )
+from soundcork.spotify_service import SpotifyService
 from soundcork.ui.speakers import Speakers
 from soundcork.unhandled_exception_handler import NotFoundHandler
 from soundcork.utils import strip_element_text
@@ -95,8 +96,6 @@ def _bmx_service_by_name(service_name: str) -> Service:
         detail=f"BMX service {service_name} not found",
     )
 
-
-from soundcork.spotify_service import SpotifyService
 
 spotify_service = SpotifyService()
 
@@ -127,8 +126,6 @@ app = FastAPI(
     version="0.0.1",
     openapi_tags=tags_metadata,
 )
-
-from soundcork.management import router as management_router
 
 origins = [
     "*",
@@ -228,12 +225,19 @@ def oauth_token_refresh(device_id: str, provider_id: str, token_type: str):
         return Response(status_code=404)
 
     # TODO:  use device to determine account, then get by account
-    token_dict = spotify_service.get_fresh_token_sync()
-    if not token_dict:
+    # get_fresh_token_sync() raises (no account / no refresh token) rather than
+    # returning a falsy value, so catch that to emit the structured no_token
+    # response instead of an uncaught 500.
+    try:
+        token_dict = spotify_service.get_fresh_token_sync()
+    except RuntimeError as e:
         logger.warning(
-            "OAuth token refresh failed — no Spotify token available (device=%s)",
+            "OAuth token refresh failed — no Spotify token available (device=%s): %s",
             device_id,
+            e,
         )
+        token_dict = None
+    if not token_dict:
         return JSONResponse(
             status_code=500,
             content={
@@ -526,7 +530,7 @@ async def post_account_device(
     request: Request,
 ):
     xml = await request.body()
-    device_id, xml_resp = add_device_to_account(datastore, account, xml.decode())
+    _, xml_resp = add_device_to_account(datastore, account, xml.decode())
 
     return bose_xml_str(xml_resp)
 
@@ -593,17 +597,19 @@ async def post_account_login(
     # then log in that account
     try:
         login_xml = ET.fromstring(xml)
-        if login_xml:
-            username = strip_element_text(login_xml.find("username"))
-            # only use the beginning of the username so that we can accept
-            # the account as an email address
-            if len(username) > 7:
-                username = username[:7]
-            account_pattern = re.compile(ACCOUNT_RE)
-            if account_pattern.match(username):
-                account_id = username
-            else:
-                raise ValueError("login username is not an account id")
+        # ET.fromstring always returns an Element (or raises ParseError); a
+        # truthiness check here is the deprecated "has children" test and would
+        # skip the body for a childless element, leaving account_id unbound.
+        username = strip_element_text(login_xml.find("username"))
+        # only use the beginning of the username so that we can accept
+        # the account as an email address
+        if len(username) > 7:
+            username = username[:7]
+        account_pattern = re.compile(ACCOUNT_RE)
+        if account_pattern.match(username):
+            account_id = username
+        else:
+            raise ValueError("login username is not an account id")
     except (ET.ParseError, ValueError):
         exception_xml = """<status>
         <message>Account Login failure.</message>
@@ -885,15 +891,18 @@ def scan_devices():
             info_elem = ET.fromstring(read_device_info(hostname_for_device(device)))
         except ET.ParseError as e:
             logger.error(
-                f"Failed to read element for\n   Device: {device}\n     Hostname {hostname_for_device(device)}"
+                f"Failed to read element for\n   Device: {device}\n"
+                f"     Hostname {hostname_for_device(device)}: {e}"
             )
             continue
+        # Orphan speakers often have a missing/empty <margeAccountUUID>, so use
+        # strip_element_text (None-safe) rather than .find(...).text.
         device_infos[device.udn] = {
             "device_id": info_elem.attrib.get("deviceID", ""),
-            "name": info_elem.find("name").text,  # type: ignore
-            "type": info_elem.find("type").text,  # type: ignore
-            "marge URL": info_elem.find("margeURL").text,  # type: ignore
-            "account": info_elem.find("margeAccountUUID").text,  # type: ignore
+            "name": strip_element_text(info_elem.find("name")),
+            "type": strip_element_text(info_elem.find("type")),
+            "marge URL": strip_element_text(info_elem.find("margeURL")),
+            "account": strip_element_text(info_elem.find("margeAccountUUID")),
         }
     return device_infos
 
@@ -902,10 +911,18 @@ def scan_devices():
 def add_device_to_datastore(device_id: str):
     devices = get_bose_devices()
     for device in devices:
-        info_elem = ET.fromstring(read_device_info(hostname_for_device(device)))
+        try:
+            info_elem = ET.fromstring(read_device_info(hostname_for_device(device)))
+        except ET.ParseError as e:
+            logger.error(f"Failed to read info for {hostname_for_device(device)}: {e}")
+            continue
         if info_elem.attrib.get("deviceID", "") == device_id:
             success = add_device(device)
             return {device_id: success}
+    raise HTTPException(
+        status_code=HTTPStatus.NOT_FOUND,
+        detail=f"Device {device_id} not found among discovered speakers",
+    )
 
 
 #####################################################################################

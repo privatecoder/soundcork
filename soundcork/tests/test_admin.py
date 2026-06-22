@@ -37,6 +37,7 @@ class FakeSpeakers:
         self.forced_refresh_calls = 0
         self.renamed_devices: list[tuple[str, str]] = []
         self.cleared_devices: list[str] = []
+        self.invalidate_calls = 0
         self.devices: dict[str, Any] = {}
 
     def refresh_discovery(self, force: bool = False) -> bool:
@@ -54,6 +55,9 @@ class FakeSpeakers:
 
     def clear_device(self, device_id: str):
         self.cleared_devices.append(device_id)
+
+    def invalidate_devices_cache(self) -> None:
+        self.invalidate_calls += 1
 
 
 class FakeSettings:
@@ -153,3 +157,6 @@ def test_rename_device_updates_speaker_and_datastore_without_clearing_cache(
     account_id, device = datastore.saved_device
     assert account_id == "7679292"
     assert device.name == "New name"
+    # The datastore name changed, so the all_devices() memo must be dropped
+    # (and the broad except must not have swallowed a missing-method error).
+    assert speakers.invalidate_calls == 1

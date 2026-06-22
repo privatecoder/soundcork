@@ -25,11 +25,40 @@ def decode_navigate_href(href: str) -> str:
     return base64.urlsafe_b64decode(href.rsplit("/", 1)[-1]).decode()
 
 
+def test_navigate_ribbon_caps_items_at_max_count(monkeypatch):
+    # Regression: the ribbon limiter appended then broke, so a 5-item cap
+    # emitted 6 items. A multi-subsection body uses the ribbon layout (cap 5).
+    tunein_uri = "http://opml.radiotime.com/?render=json"
+
+    def fake_urlopen(url, timeout=None):
+        children = [
+            {"type": "audio", "guide_id": f"s{i}", "text": f"Station {i}"}
+            for i in range(10)
+        ]
+        return FakeTuneInResponse(
+            {
+                "head": {"title": "Browse"},
+                "body": [
+                    {"text": "Subsection A", "children": children},
+                    {"text": "Subsection B", "children": children},
+                ],
+            }
+        )
+
+    monkeypatch.setattr("soundcork.bmx.urllib.request.urlopen", fake_urlopen)
+
+    response = tunein_navigate_v1(encode_uri(tunein_uri))
+
+    ribbon = response.bmx_sections[0]
+    assert ribbon.layout == "ribbon"
+    assert len(ribbon.items) == 5
+
+
 def test_navigate_uses_ashx_parser_for_opml_browse_urls(monkeypatch):
     tunein_uri = "http://opml.radiotime.com/Browse.ashx?c=podcast&render=json"
     requested_urls = []
 
-    def fake_urlopen(url):
+    def fake_urlopen(url, timeout=None):
         requested_urls.append(url)
         return FakeTuneInResponse(
             {
@@ -64,7 +93,7 @@ def test_navigate_uses_ashx_parser_for_opml_browse_urls(monkeypatch):
 def test_search_url_encodes_spaces_and_more_link_uses_encoded_query(monkeypatch):
     requested_urls = []
 
-    def fake_urlopen(url):
+    def fake_urlopen(url, timeout=None):
         requested_urls.append(url)
         return FakeTuneInResponse(
             {
@@ -113,7 +142,7 @@ def test_profile_navigation_self_link_uses_profile_route(monkeypatch):
     profile_uri = "http://opml.radiotime.com/Profile.ashx?id=p123"
     contents_uri = "http://opml.radiotime.com/Contents.ashx?id=p123"
 
-    def fake_urlopen(url):
+    def fake_urlopen(url, timeout=None):
         if url == profile_uri:
             return FakeTuneInResponse(
                 {

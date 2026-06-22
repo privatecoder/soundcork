@@ -5,7 +5,6 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from http import HTTPStatus
 from os import listdir, makedirs, mkdir, path, remove, rmdir, walk
-from random import randint
 from typing import Optional
 
 from fastapi import HTTPException
@@ -128,13 +127,13 @@ class DataStore:
         """Saves the label for the given account"""
         with open(path.join(self.data_dir, ACCOUNTS_FILE), "r") as f:
             accounts = json.load(f)
-        if account_label := accounts.get(label):
-            if account_label == label:
+        existing = accounts.get(account)
+        if existing:
+            if existing.get("label") == label:
                 return
             logger.warning(
-                (
-                    f"Account {account} already has label {account_label}, overwriting with {label}"
-                )
+                f"Account {account} already has label {existing.get('label')}, "
+                f"overwriting with {label}"
             )
         accounts[account] = {"label": label}
         with open(path.join(self.data_dir, ACCOUNTS_FILE), "w") as f:
@@ -268,7 +267,7 @@ class DataStore:
             content_item = preset.find("ContentItem")
             # If name is not present, the .text will correctly raise an error here
             name = content_item.find("itemName").text  # type: ignore
-            source = content_item.attrib["source"]  # type: ignore
+            source = content_item.attrib.get("source", "")  # type: ignore
             type = content_item.attrib.get("type", "")  # type: ignore
             location = content_item.attrib.get("location", "")  # type: ignore
             source_account = content_item.attrib.get("sourceAccount", "")  # type: ignore
@@ -438,8 +437,12 @@ class DataStore:
             datetime.now().timestamp(), timezone.utc
         ).isoformat(timespec="milliseconds")
         all_sources = self.get_configured_sources(account)
-        max_source = max(all_sources, key=lambda x: int(x.id))
-        new_source.id = str(int(max_source.id) + randint(1, 100))
+        max_source = max(all_sources, key=lambda x: int(x.id), default=None)
+        if max_source is None:
+            # First source for an account with an empty Sources.xml.
+            new_source.id = "100001"
+        else:
+            new_source.id = str(int(max_source.id) + random.randint(1, 100))
         new_source.updated_on = now
         new_source.created_on = now
 
@@ -537,14 +540,20 @@ class DataStore:
         doesn't already exist in the directory.
         """
         device_dir = self.poweron_device_dir(device_id)
-        if not path.exists(device_dir):
-            mkdir(device_dir)
+        try:
+            if not path.exists(device_dir):
+                mkdir(device_dir)
 
-        with open(
-            path.join(device_dir, POWERON_FILE),
-            "w",
-        ) as poweron_file:
-            poweron_file.write(poweron_xml)
+            with open(
+                path.join(device_dir, POWERON_FILE),
+                "w",
+            ) as poweron_file:
+                poweron_file.write(poweron_xml)
+        except OSError as e:
+            logger.error(f"Could not write poweron file for {device_id}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write poweron file"
+            )
 
     def device_info_from_poweron_xml(self, poweron_elem: ET.Element) -> DeviceInfo:
         """Creates a DeviceInfo object
@@ -555,23 +564,38 @@ class DataStore:
         Returns:
         - DeviceInfo:  DeviceInfo built from the poweron XML
         """
+        # Default every field so a malformed poweron XML (missing <device>,
+        # <product>, or <device-landscape>) yields a DeviceInfo with empty
+        # values instead of raising UnboundLocalError.
+        device_id = ""
+        device_serial_number = ""
+        firmware_version = ""
+        product_code = ""
+        product_serial_number = ""
+        ip_address = ""
+
         device_elem = poweron_elem.find("device")
-        if device_elem != None:
+        if device_elem is not None:
             device_id = device_elem.attrib.get("id", "")
             device_serial_number = strip_element_text(device_elem.find("serialnumber"))
             firmware_version = strip_element_text(device_elem.find("firmware-version"))
             product_elem = device_elem.find("product")
-            if product_elem != None:
+            if product_elem is not None:
                 product_code = product_elem.attrib.get("product_code", "")
-                product_type = product_elem.attrib.get("type", "")
                 product_serial_number = strip_element_text(
                     product_elem.find("serialnumber")
                 )
         diagnostic_elem = poweron_elem.find("diagnostic-data")
-        if diagnostic_elem != None:
+        if diagnostic_elem is not None:
             landscape_elem = diagnostic_elem.find("device-landscape")
-            if landscape_elem != None:
+            if landscape_elem is not None:
                 ip_address = strip_element_text(landscape_elem.find("ip-address"))
+
+        # device_id drives the on-disk poweron path; refuse a malformed XML
+        # with a controlled error rather than returning an empty id (which
+        # would write a stray PowerOn.xml at the devices-dir root).
+        if not device_id:
+            raise RuntimeError("poweron XML is missing the required device id")
 
         return DeviceInfo(
             device_id=device_id,
@@ -828,16 +852,13 @@ class DataStore:
         groups = []
         for fn in listdir(devices_dir):
             if fn.startswith("Group_") and fn.endswith(".xml"):
-                group = self.get_group(account, fn)
+                # get_group() re-wraps the id as "Group_{id}.xml", so pass the
+                # bare id, not the full filename, or it never finds the file.
+                group_id = fn[len("Group_") : -len(".xml")]
+                group = self.get_group(account, group_id)
                 if group:
                     groups.append(group)
         return groups
-
-    def group_exists(self, account: str, group_id: str) -> bool:
-        """check if a group with given id exist"""
-        return path.exists(
-            path.join(self.account_devices_dir(account), f"Group_{group_id}.xml")
-        )
 
     def device_is_groupable(self, device_info: DeviceInfo) -> bool:
         # Stored product_code is "{type} {moduleType}" (e.g. "SoundTouch 10
@@ -893,9 +914,15 @@ class DataStore:
         group_xml = self.group_to_xml(group)
 
         ET.indent(group_xml, space="    ", level=0)
-        ET.ElementTree(group_xml).write(
-            filepath, xml_declaration=True, encoding="UTF-8"
-        )
+        try:
+            ET.ElementTree(group_xml).write(
+                filepath, xml_declaration=True, encoding="UTF-8"
+            )
+        except OSError as e:
+            logger.error(f"Could not write group {filepath}: {e}")
+            raise HTTPException(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "Could not write group"
+            )
         return group_xml
 
     def get_group(self, account: str, group_id: str) -> Group | None:
@@ -980,8 +1007,14 @@ class DataStore:
         """Converts an XML element into a Group object."""
         name = strip_element_text(group_elem.find("name"))
         master_id = strip_element_text(group_elem.find("masterDeviceId"))
+        # Default the role fields so a group file missing <roles> or a LEFT/
+        # RIGHT role doesn't raise UnboundLocalError when building the Group.
+        left_id = ""
+        left_ip = ""
+        right_id = ""
+        right_ip = ""
         roles_elem = group_elem.find("roles")
-        if not roles_elem == None:
+        if roles_elem is not None:
             for role_elem in roles_elem.findall("groupRole"):
                 role = strip_element_text(role_elem.find("role"))
                 if role == "LEFT":

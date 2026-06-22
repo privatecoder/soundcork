@@ -183,7 +183,9 @@ def content_item_source_xml(
                 cs for cs in configured_sources if cs.id == content_item.source_id
             )
         except StopIteration:
-            print(f"invalid source for content_item.source_id {content_item.source_id}")
+            logger.warning(
+                f"invalid source for content_item.source_id {content_item.source_id}"
+            )
             raise HTTPException(status_code=400, detail="Invalid source")
         return configured_source_xml(matching_src)
 
@@ -198,8 +200,9 @@ def content_item_source_xml(
             )
         )
     except StopIteration:
-        print(
-            f"invalid source for source key {content_item.source} account {content_item.source_account}"
+        logger.warning(
+            f"invalid source for source key {content_item.source} "
+            f"account {content_item.source_account}"
         )
         raise HTTPException(status_code=400, detail="Invalid source")
     return configured_source_xml(matching_src)
@@ -241,6 +244,25 @@ def configured_source_xml(conf_source: ConfiguredSource) -> ET.Element:
     return source
 
 
+def _recent_xml(
+    recent: Recent,
+    created_on: str,
+    lastplayed: str,
+    conf_sources_list: list[ConfiguredSource],
+) -> ET.Element:
+    """Builds the response `<recent>` element shared by recents_xml/add_recent."""
+    recent_element = ET.Element("recent")
+    recent_element.attrib["id"] = recent.id
+    ET.SubElement(recent_element, "contentItemType").text = recent.type
+    ET.SubElement(recent_element, "createdOn").text = created_on
+    ET.SubElement(recent_element, "lastplayedat").text = lastplayed
+    ET.SubElement(recent_element, "location").text = recent.location
+    ET.SubElement(recent_element, "name").text = recent.name
+    recent_element.append(content_item_source_xml(conf_sources_list, recent))
+    ET.SubElement(recent_element, "updatedOn").text = lastplayed
+    return recent_element
+
+
 def recents_xml(datastore: "DataStore", account: str, device: str) -> ET.Element:
     conf_sources_list = datastore.get_configured_sources(account, device)
 
@@ -248,21 +270,13 @@ def recents_xml(datastore: "DataStore", account: str, device: str) -> ET.Element
 
     recents_element = ET.Element("recents")
     for recent in recents_list:
-        lastplayed = datetime.fromtimestamp(
-            int(recent.utc_time), timezone.utc
-        ).isoformat()
-
+        # Tolerate a bad/empty utcTime so one malformed recent can't take down
+        # the whole account_full_xml response.
+        lastplayed = _timestamp_or_default(recent.utc_time)
         created_on = _timestamp_or_default(recent.created_on)
-
-        recent_element = ET.SubElement(recents_element, "recent")
-        recent_element.attrib["id"] = recent.id
-        ET.SubElement(recent_element, "contentItemType").text = recent.type
-        ET.SubElement(recent_element, "createdOn").text = created_on
-        ET.SubElement(recent_element, "lastplayedat").text = lastplayed
-        ET.SubElement(recent_element, "location").text = recent.location
-        ET.SubElement(recent_element, "name").text = recent.name
-        recent_element.append(content_item_source_xml(conf_sources_list, recent))
-        ET.SubElement(recent_element, "updatedOn").text = lastplayed
+        recents_element.append(
+            _recent_xml(recent, created_on, lastplayed, conf_sources_list)
+        )
 
     return recents_element
 
@@ -338,23 +352,10 @@ def add_recent(
 
         datastore.save_recents(account, device, recents_list)
 
-    lastplayed = datetime.fromtimestamp(
-        int(recent_obj.utc_time), timezone.utc
-    ).isoformat()
+    lastplayed = _timestamp_or_default(recent_obj.utc_time)
 
     # return newly created or updated element in return-value xml format
-    # TODO reuse code from recents_xml()
-    recent_element = ET.Element("recent")
-    recent_element.attrib["id"] = recent_obj.id
-    ET.SubElement(recent_element, "contentItemType").text = recent_obj.type
-    ET.SubElement(recent_element, "createdOn").text = created_on
-    ET.SubElement(recent_element, "lastplayedat").text = lastplayed
-    ET.SubElement(recent_element, "location").text = recent_obj.location
-    ET.SubElement(recent_element, "name").text = recent_obj.name
-    recent_element.append(content_item_source_xml(conf_sources_list, recent_obj))
-    ET.SubElement(recent_element, "updatedOn").text = lastplayed
-
-    return recent_element
+    return _recent_xml(recent_obj, created_on, lastplayed, conf_sources_list)
 
 
 def provider_settings_xml(account: str, provider_id: str = "") -> ET.Element:
@@ -452,10 +453,20 @@ def add_device_to_account(
     # first see if this device is already defined
     existing_device, current_account = datastore.find_device(device_id)
     if existing_device:
-        if current_account:
-            datastore.remove_device(current_account, device_id)
         existing_device.name = name
-        datastore.add_device(account, device_id, existing_device)
+        if current_account == account:
+            # Already in the target account; just update its info in place.
+            datastore.save_device_info(existing_device, account)
+        else:
+            # Write to the new account BEFORE removing from the old one, so a
+            # failure mid-move can't leave the device in neither account.
+            # add_device() returns None if the target account already has this
+            # device — in that case update the existing target row in place so
+            # the rename isn't lost when we drop the old account's row.
+            if datastore.add_device(account, device_id, existing_device) is None:
+                datastore.save_device_info(existing_device, account)
+            if current_account:
+                datastore.remove_device(current_account, device_id)
     else:
         device = get_device_by_id(device_id)
         if not device:

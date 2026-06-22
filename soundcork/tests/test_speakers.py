@@ -222,3 +222,24 @@ def test_refresh_discovery_force_clears_unreachable_cache(monkeypatch):
 def test_probe_pool_is_separate_from_batch_pool(monkeypatch):
     speakers = _make_speakers(monkeypatch)
     assert speakers._probe_pool is not speakers._batch_pool
+
+
+def test_probe_and_queryable_keeps_unknown_but_drops_known_dead(monkeypatch):
+    """probe_and_queryable must exclude devices KNOWN unreachable but keep
+    "unknown" ones (probe inconclusive) so the zone-membership union the
+    dashboard builds isn't shrunk."""
+    speakers = _make_speakers(monkeypatch)
+
+    # Stub the probe so it marks DEAD unreachable but leaves UNKNOWN/LIVE
+    # untouched (simulating an inconclusive probe for them).
+    def fake_filter(ids):
+        speakers._mark_unreachable("DEAD", reason="test")
+        return [d for d in ids if d not in ("DEAD", "UNKNOWN")]
+
+    monkeypatch.setattr(speakers, "_filter_to_reachable_ids", fake_filter)
+
+    result = speakers.probe_and_queryable(["LIVE", "DEAD", "UNKNOWN"])
+
+    assert "DEAD" not in result
+    assert "LIVE" in result
+    assert "UNKNOWN" in result  # inconclusive probe still gets a real call
